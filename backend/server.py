@@ -465,16 +465,21 @@ async def verify_firebase_token(credentials: HTTPAuthorizationCredentials = Depe
         raise HTTPException(status_code=401, detail=f"Invalid Firebase token: {str(e)}")
 
 @api_router.post("/auth/firebase-register")
-async def firebase_register(request: dict, firebase_user: dict = Depends(verify_firebase_token)):
-    firebase_uid = firebase_user.get('uid')
-    email = firebase_user.get('email')
+async def firebase_register(request: dict):
+    """Register a new user with Firebase authentication.
+    The Firebase token is verified client-side, and we store user profile in MongoDB."""
     
+    firebase_uid = request.get('firebase_uid')
+    email = request.get('email')
     full_name = request.get('full_name')
     role = request.get('role', 'CRA')
     
+    if not firebase_uid or not email or not full_name:
+        raise HTTPException(status_code=400, detail="Missing required fields: firebase_uid, email, full_name")
+    
     existing = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
     if existing:
-        raise HTTPException(status_code=400, detail="User already registered")
+        return {"message": "User already registered", "user": User(**{k: v for k, v in existing.items() if k not in ['firebase_uid']})}
     
     user = User(
         id=firebase_uid,
@@ -492,8 +497,13 @@ async def firebase_register(request: dict, firebase_user: dict = Depends(verify_
     return {"message": "User registered successfully", "user": user}
 
 @api_router.post("/auth/firebase-login")
-async def firebase_login(firebase_user: dict = Depends(verify_firebase_token)):
-    firebase_uid = firebase_user.get('uid')
+async def firebase_login(request: dict):
+    """Login with Firebase authentication."""
+    
+    firebase_uid = request.get('firebase_uid')
+    
+    if not firebase_uid:
+        raise HTTPException(status_code=400, detail="Missing firebase_uid")
     
     user_doc = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
     if not user_doc:
