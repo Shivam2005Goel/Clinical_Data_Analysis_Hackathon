@@ -193,13 +193,13 @@ async def login(credentials: UserLogin):
     return TokenResponse(access_token=access_token, token_type="bearer", user=user)
 
 @api_router.get("/auth/me", response_model=User)
-async def get_me(current_user: dict = Depends(get_current_user)):
+async def get_me(current_user: dict = Depends(get_current_user_hybrid)):
     return User(**current_user)
 
 # ==================== SUPABASE DATA ENDPOINTS ====================
 
 @api_router.get("/data/high-risk-sites")
-async def get_high_risk_sites(current_user: dict = Depends(get_current_user)):
+async def get_high_risk_sites(current_user: dict = Depends(get_current_user_hybrid)):
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured. Please add SUPABASE_URL and SUPABASE_KEY to environment variables.")
     try:
@@ -210,7 +210,7 @@ async def get_high_risk_sites(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"Error fetching data: {str(e)}")
 
 @api_router.get("/data/patient-level")
-async def get_patient_level_data(current_user: dict = Depends(get_current_user)):
+async def get_patient_level_data(current_user: dict = Depends(get_current_user_hybrid)):
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured. Please add SUPABASE_URL and SUPABASE_KEY to environment variables.")
     try:
@@ -221,7 +221,7 @@ async def get_patient_level_data(current_user: dict = Depends(get_current_user))
         raise HTTPException(status_code=500, detail=f"Error fetching data: {str(e)}")
 
 @api_router.get("/data/site-level")
-async def get_site_level_data(current_user: dict = Depends(get_current_user)):
+async def get_site_level_data(current_user: dict = Depends(get_current_user_hybrid)):
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured. Please add SUPABASE_URL and SUPABASE_KEY to environment variables.")
     try:
@@ -232,7 +232,7 @@ async def get_site_level_data(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"Error fetching data: {str(e)}")
 
 @api_router.get("/data/dashboard-stats")
-async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
+async def get_dashboard_stats(current_user: dict = Depends(get_current_user_hybrid)):
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured")
     try:
@@ -264,7 +264,7 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
 # ==================== ALERTS ENDPOINTS ====================
 
 @api_router.post("/alerts", response_model=Alert)
-async def create_alert(alert_data: AlertCreate, current_user: dict = Depends(get_current_user)):
+async def create_alert(alert_data: AlertCreate, current_user: dict = Depends(get_current_user_hybrid)):
     alert = Alert(**alert_data.model_dump(), created_by=current_user['id'])
     doc = alert.model_dump()
     doc['created_at'] = doc['created_at'].isoformat()
@@ -272,7 +272,7 @@ async def create_alert(alert_data: AlertCreate, current_user: dict = Depends(get
     return alert
 
 @api_router.get("/alerts", response_model=List[Alert])
-async def get_alerts(status: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def get_alerts(status: Optional[str] = None, current_user: dict = Depends(get_current_user_hybrid)):
     query = {}
     if status:
         query['status'] = status
@@ -283,7 +283,7 @@ async def get_alerts(status: Optional[str] = None, current_user: dict = Depends(
     return alerts
 
 @api_router.patch("/alerts/{alert_id}/status")
-async def update_alert_status(alert_id: str, status: str, current_user: dict = Depends(get_current_user)):
+async def update_alert_status(alert_id: str, status: str, current_user: dict = Depends(get_current_user_hybrid)):
     result = await db.alerts.update_one({"id": alert_id}, {"$set": {"status": status}})
     if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Alert not found")
@@ -292,7 +292,7 @@ async def update_alert_status(alert_id: str, status: str, current_user: dict = D
 # ==================== COMMENTS ENDPOINTS ====================
 
 @api_router.post("/comments", response_model=Comment)
-async def create_comment(comment_data: CommentCreate, current_user: dict = Depends(get_current_user)):
+async def create_comment(comment_data: CommentCreate, current_user: dict = Depends(get_current_user_hybrid)):
     comment = Comment(**comment_data.model_dump(), created_by=current_user['id'])
     doc = comment.model_dump()
     doc['created_at'] = doc['created_at'].isoformat()
@@ -300,7 +300,7 @@ async def create_comment(comment_data: CommentCreate, current_user: dict = Depen
     return comment
 
 @api_router.get("/comments/{entity_type}/{entity_id}", response_model=List[Comment])
-async def get_comments(entity_type: str, entity_id: str, current_user: dict = Depends(get_current_user)):
+async def get_comments(entity_type: str, entity_id: str, current_user: dict = Depends(get_current_user_hybrid)):
     comments = await db.comments.find({"entity_type": entity_type, "entity_id": entity_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
     for comment in comments:
         if isinstance(comment['created_at'], str):
@@ -310,7 +310,7 @@ async def get_comments(entity_type: str, entity_id: str, current_user: dict = De
 # ==================== TAGS ENDPOINTS ====================
 
 @api_router.post("/tags", response_model=Tag)
-async def create_tag(tag_data: TagCreate, current_user: dict = Depends(get_current_user)):
+async def create_tag(tag_data: TagCreate, current_user: dict = Depends(get_current_user_hybrid)):
     tag = Tag(**tag_data.model_dump(), created_by=current_user['id'])
     doc = tag.model_dump()
     doc['created_at'] = doc['created_at'].isoformat()
@@ -318,7 +318,7 @@ async def create_tag(tag_data: TagCreate, current_user: dict = Depends(get_curre
     return tag
 
 @api_router.get("/tags/{entity_type}/{entity_id}", response_model=List[Tag])
-async def get_tags(entity_type: str, entity_id: str, current_user: dict = Depends(get_current_user)):
+async def get_tags(entity_type: str, entity_id: str, current_user: dict = Depends(get_current_user_hybrid)):
     tags = await db.tags.find({"entity_type": entity_type, "entity_id": entity_id}, {"_id": 0}).to_list(100)
     for tag in tags:
         if isinstance(tag['created_at'], str):
@@ -328,7 +328,7 @@ async def get_tags(entity_type: str, entity_id: str, current_user: dict = Depend
 # ==================== AI ENDPOINTS ====================
 
 @api_router.post("/ai/query")
-async def ai_natural_language_query(request: AIQueryRequest, current_user: dict = Depends(get_current_user)):
+async def ai_natural_language_query(request: AIQueryRequest, current_user: dict = Depends(get_current_user_hybrid)):
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=503, detail="AI service not configured")
     
@@ -354,7 +354,7 @@ async def ai_natural_language_query(request: AIQueryRequest, current_user: dict 
         raise HTTPException(status_code=500, detail=f"AI query failed: {str(e)}")
 
 @api_router.post("/ai/generate-report")
-async def ai_generate_report(request: AIReportRequest, current_user: dict = Depends(get_current_user)):
+async def ai_generate_report(request: AIReportRequest, current_user: dict = Depends(get_current_user_hybrid)):
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=503, detail="AI service not configured")
     
@@ -387,7 +387,7 @@ async def ai_generate_report(request: AIReportRequest, current_user: dict = Depe
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
 @api_router.post("/ai/recommend-actions")
-async def ai_recommend_actions(site_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def ai_recommend_actions(site_id: Optional[str] = None, current_user: dict = Depends(get_current_user_hybrid)):
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=503, detail="AI service not configured")
     
