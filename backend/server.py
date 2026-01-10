@@ -143,6 +143,29 @@ def create_access_token(data: dict) -> str:
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
+# ==================== FIREBASE INITIALIZATION ====================
+
+firebase_admin_initialized = False
+
+def init_firebase_admin():
+    global firebase_admin_initialized
+    if firebase_admin_initialized:
+        return
+    
+    firebase_config_path = os.getenv('FIREBASE_ADMIN_CONFIG_PATH', '')
+    if firebase_config_path and os.path.exists(firebase_config_path):
+        try:
+            import firebase_admin
+            from firebase_admin import credentials
+            cred = credentials.Certificate(firebase_config_path)
+            firebase_admin.initialize_app(cred)
+            firebase_admin_initialized = True
+            logger.info("Firebase Admin SDK initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Firebase Admin: {str(e)}")
+
+init_firebase_admin()
+
 async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     token = credentials.credentials
     
