@@ -465,15 +465,12 @@ async def verify_firebase_token(credentials: HTTPAuthorizationCredentials = Depe
         raise HTTPException(status_code=401, detail=f"Invalid Firebase token: {str(e)}")
 
 @api_router.post("/auth/firebase-register")
-async def firebase_register(firebase_user: dict = Depends(verify_firebase_token)):
+async def firebase_register(request: dict, firebase_user: dict = Depends(verify_firebase_token)):
     firebase_uid = firebase_user.get('uid')
     email = firebase_user.get('email')
     
-    # Get additional data from request body
-    from fastapi import Body
-    body = await api_router.app.state.request.json()
-    full_name = body.get('full_name')
-    role = body.get('role', 'CRA')
+    full_name = request.get('full_name')
+    role = request.get('role', 'CRA')
     
     existing = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
     if existing:
