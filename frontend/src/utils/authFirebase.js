@@ -26,15 +26,12 @@ export const firebaseRegister = async (email, password, full_name, role = 'CRA')
   };
 
   try {
-    await api.post('/auth/firebase-register', userData, {
-      headers: { Authorization: `Bearer ${idToken}` }
-    });
+    const response = await api.post('/auth/firebase-register', userData);
+    return { user: response.data.user, token: idToken };
   } catch (error) {
     await user.delete();
     throw error;
   }
-
-  return { user: userData, token: idToken };
 };
 
 export const firebaseLogin = async (email, password) => {
