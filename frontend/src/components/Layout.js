@@ -23,7 +23,11 @@ const Layout = () => {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (useFirebase) {
+      const { firebaseLogout } = await import('../utils/authFirebase');
+      await firebaseLogout();
+    }
     logout();
     navigate('/login');
   };
