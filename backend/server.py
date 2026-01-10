@@ -203,7 +203,7 @@ async def get_high_risk_sites(current_user: dict = Depends(get_current_user)):
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured. Please add SUPABASE_URL and SUPABASE_KEY to environment variables.")
     try:
-        response = supabase.table('high_risk_sites').select('*').execute()
+        response = supabase.table('High Risk Sites').select('*').execute()
         return {"data": response.data, "count": len(response.data)}
     except Exception as e:
         logger.error(f"Error fetching high risk sites: {str(e)}")
@@ -214,7 +214,7 @@ async def get_patient_level_data(current_user: dict = Depends(get_current_user))
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured. Please add SUPABASE_URL and SUPABASE_KEY to environment variables.")
     try:
-        response = supabase.table('patient_level_unified').select('*').execute()
+        response = supabase.table('Patient Data').select('*').execute()
         return {"data": response.data, "count": len(response.data)}
     except Exception as e:
         logger.error(f"Error fetching patient data: {str(e)}")
@@ -225,7 +225,7 @@ async def get_site_level_data(current_user: dict = Depends(get_current_user)):
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured. Please add SUPABASE_URL and SUPABASE_KEY to environment variables.")
     try:
-        response = supabase.table('site_level_summary').select('*').execute()
+        response = supabase.table('Sites Data').select('*').execute()
         return {"data": response.data, "count": len(response.data)}
     except Exception as e:
         logger.error(f"Error fetching site data: {str(e)}")
