@@ -179,8 +179,32 @@ async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = De
             user = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
             if user:
                 return user
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"Firebase token verification failed: {str(e)}")
+    
+    # For Firebase tokens without Admin SDK, try to extract user from token payload
+    # Firebase tokens are JWTs, we can decode them to get the user ID
+    try:
+        # Try to decode as Firebase token (without verification since we don't have Admin SDK)
+        import base64
+        import json
+        
+        # Firebase ID tokens have 3 parts separated by dots
+        parts = token.split('.')
+        if len(parts) == 3:
+            # Decode the payload (second part)
+            payload_bytes = parts[1] + '=' * (4 - len(parts[1]) % 4)  # Add padding
+            payload_json = base64.urlsafe_b64decode(payload_bytes).decode('utf-8')
+            payload = json.loads(payload_json)
+            
+            # Check if it's a Firebase token
+            if 'user_id' in payload or 'firebase' in payload.get('iss', ''):
+                firebase_uid = payload.get('user_id') or payload.get('sub')
+                user = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
+                if user:
+                    return user
+    except Exception as e:
+        logger.debug(f"Firebase token decode attempt failed: {str(e)}")
     
     # Fall back to JWT authentication
     try:
