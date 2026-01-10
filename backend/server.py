@@ -408,6 +408,109 @@ async def ai_recommend_actions(site_id: Optional[str] = None, current_user: dict
         logger.error(f"AI recommendations error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Recommendations failed: {str(e)}")
 
+# ==================== FIREBASE AUTH ENDPOINTS ====================
+
+firebase_admin_initialized = False
+
+def init_firebase_admin():
+    global firebase_admin_initialized
+    if firebase_admin_initialized:
+        return
+    
+    firebase_config_path = os.getenv('FIREBASE_ADMIN_CONFIG_PATH', '')
+    if firebase_config_path and os.path.exists(firebase_config_path):
+        try:
+            import firebase_admin
+            from firebase_admin import credentials
+            cred = credentials.Certificate(firebase_config_path)
+            firebase_admin.initialize_app(cred)
+            firebase_admin_initialized = True
+            logger.info("Firebase Admin SDK initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Firebase Admin: {str(e)}")
+
+init_firebase_admin()
+
+async def verify_firebase_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    try:
+        import firebase_admin
+        from firebase_admin import auth as firebase_auth
+        
+        if not firebase_admin_initialized:
+            raise HTTPException(status_code=503, detail="Firebase not configured")
+        
+        token = credentials.credentials
+        decoded_token = firebase_auth.verify_id_token(token)
+        return decoded_token
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Firebase Admin SDK not installed")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid Firebase token: {str(e)}")
+
+@api_router.post("/auth/firebase-register")
+async def firebase_register(user_data: UserRegister, firebase_user: dict = Depends(verify_firebase_token)):
+    firebase_uid = firebase_user.get('uid')
+    
+    existing = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="User already registered")
+    
+    user = User(
+        id=firebase_uid,
+        email=user_data.email,
+        full_name=user_data.full_name,
+        role=user_data.role
+    )
+    
+    doc = user.model_dump()
+    doc['firebase_uid'] = firebase_uid
+    doc['created_at'] = doc['created_at'].isoformat()
+    
+    await db.users.insert_one(doc)
+    
+    return {"message": "User registered successfully", "user": user}
+
+@api_router.post("/auth/firebase-login")
+async def firebase_login(firebase_user: dict = Depends(verify_firebase_token)):
+    firebase_uid = firebase_user.get('uid')
+    
+    user_doc = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="User not found. Please register first.")
+    
+    user = User(**{k: v for k, v in user_doc.items() if k not in ['firebase_uid', 'password']})
+    return {"message": "Login successful", "user": user}
+
+# Update get_current_user to support both JWT and Firebase tokens
+async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    token = credentials.credentials
+    
+    if firebase_admin_initialized:
+        try:
+            import firebase_admin
+            from firebase_admin import auth as firebase_auth
+            decoded_token = firebase_auth.verify_id_token(token)
+            firebase_uid = decoded_token.get('uid')
+            user = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
+            if user:
+                return user
+        except:
+            pass
+    
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        user = await db.users.find_one({"id": user_id}, {"_id": 0})
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
 # ==================== ROOT ENDPOINTS ====================
 
 @api_router.get("/")
