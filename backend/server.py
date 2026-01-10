@@ -143,9 +143,24 @@ def create_access_token(data: dict) -> str:
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    token = credentials.credentials
+    
+    # Try Firebase authentication first
+    if firebase_admin_initialized:
+        try:
+            import firebase_admin
+            from firebase_admin import auth as firebase_auth
+            decoded_token = firebase_auth.verify_id_token(token)
+            firebase_uid = decoded_token.get('uid')
+            user = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
+            if user:
+                return user
+        except:
+            pass
+    
+    # Fall back to JWT authentication
     try:
-        token = credentials.credentials
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub")
         if user_id is None:
