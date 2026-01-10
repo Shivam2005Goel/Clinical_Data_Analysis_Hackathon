@@ -448,27 +448,6 @@ async def ai_recommend_actions(site_id: Optional[str] = None, current_user: dict
 
 # ==================== FIREBASE AUTH ENDPOINTS ====================
 
-firebase_admin_initialized = False
-
-def init_firebase_admin():
-    global firebase_admin_initialized
-    if firebase_admin_initialized:
-        return
-    
-    firebase_config_path = os.getenv('FIREBASE_ADMIN_CONFIG_PATH', '')
-    if firebase_config_path and os.path.exists(firebase_config_path):
-        try:
-            import firebase_admin
-            from firebase_admin import credentials
-            cred = credentials.Certificate(firebase_config_path)
-            firebase_admin.initialize_app(cred)
-            firebase_admin_initialized = True
-            logger.info("Firebase Admin SDK initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Firebase Admin: {str(e)}")
-
-init_firebase_admin()
-
 async def verify_firebase_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     try:
         import firebase_admin
