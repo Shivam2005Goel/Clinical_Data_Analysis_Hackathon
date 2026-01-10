@@ -18,7 +18,7 @@ import { Button } from '../components/ui/button';
 import { Avatar, AvatarFallback } from '../components/ui/avatar';
 
 const Layout = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, useFirebase } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
