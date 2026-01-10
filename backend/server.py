@@ -498,36 +498,6 @@ async def firebase_login(firebase_user: dict = Depends(verify_firebase_token)):
     user = User(**{k: v for k, v in user_doc.items() if k not in ['firebase_uid', 'password']})
     return {"message": "Login successful", "user": user}
 
-# Update get_current_user to support both JWT and Firebase tokens
-async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
-    token = credentials.credentials
-    
-    if firebase_admin_initialized:
-        try:
-            import firebase_admin
-            from firebase_admin import auth as firebase_auth
-            decoded_token = firebase_auth.verify_id_token(token)
-            firebase_uid = decoded_token.get('uid')
-            user = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
-            if user:
-                return user
-        except:
-            pass
-    
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        user_id = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        user = await db.users.find_one({"id": user_id}, {"_id": 0})
-        if user is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-        return user
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-
 # ==================== ROOT ENDPOINTS ====================
 
 @api_router.get("/")
