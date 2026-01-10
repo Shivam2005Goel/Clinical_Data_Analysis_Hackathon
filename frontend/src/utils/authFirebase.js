@@ -45,11 +45,9 @@ export const firebaseLogin = async (email, password) => {
 
   const idToken = await user.getIdToken();
 
-  const response = await api.post(
-    '/auth/firebase-login',
-    {},
-    { headers: { Authorization: `Bearer ${idToken}` } }
-  );
+  const response = await api.post('/auth/firebase-login', {
+    firebase_uid: user.uid
+  });
 
   return { user: response.data.user, token: idToken };
 };
