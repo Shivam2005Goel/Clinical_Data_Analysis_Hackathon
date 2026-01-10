@@ -236,8 +236,8 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured")
     try:
-        sites_response = supabase.table('site_level_summary').select('*').execute()
-        patients_response = supabase.table('patient_level_unified').select('*').execute()
+        sites_response = supabase.table('Sites Data').select('*').execute()
+        patients_response = supabase.table('Patient Data').select('*').execute()
         
         sites = sites_response.data
         patients = patients_response.data
