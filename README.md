@@ -348,3 +348,5 @@ SUPABASE_URL=https://qlavibrdivegeecqzxzn.supabase.co
 SUPABASE_KEY=<your-supabase-key>
 FIREBASE_ADMIN_CONFIG_PATH=/app/backend/firebase-admin.json
 ```
+![Alt text for the image](./Images/dashboard.png)
+
