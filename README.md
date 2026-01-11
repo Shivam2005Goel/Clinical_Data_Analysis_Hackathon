@@ -348,3 +348,18 @@ SUPABASE_URL=https://qlavibrdivegeecqzxzn.supabase.co
 SUPABASE_KEY=<your-supabase-key>
 FIREBASE_ADMIN_CONFIG_PATH=/app/backend/firebase-admin.json
 ```
+_Register/Login Page_
+![Alt text for the image](./Images/dashboard.png)
+_Dashboard_
+![Alt text for the image](./Images/dashboard.png)
+_Sites Risk Analysis_
+![Alt text for the image](./Images/Sites%20Risk%20Analysis.png)
+_Patient Analysis_
+![Alt text for the image](./Images/Patient%20Analysis.png)
+_AI Agents_
+![Alt text for the image](./Images/AI%20Agents.png)
+_Data Quality Analysis_
+![Alt text for the image](./Images/Data%20Quality%20Analysis.png)
+_Generate Reports_
+![Alt text for the image](./Images/Generate%20Reports.png)
+
