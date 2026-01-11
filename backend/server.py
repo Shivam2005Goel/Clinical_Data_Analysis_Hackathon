@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 import bcrypt
 import jwt
 from supabase import create_client, Client
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from openai import AsyncOpenAI
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -37,10 +37,25 @@ JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')
 JWT_EXPIRATION_MINUTES = int(os.getenv('JWT_EXPIRATION_MINUTES', '1440'))
 
 # OpenAI Config
-EMERGENT_LLM_KEY = os.getenv('EMERGENT_LLM_KEY')
+EMERGENT_LLM_KEY = os.getenv('EMERGENT_LLM_KEY') # Keeping for backward compatibility
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY') or EMERGENT_LLM_KEY
+
+client_openai = None
+if OPENAI_API_KEY:
+    client_openai = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Create the main app
 app = FastAPI()
+
+# Enable CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer()
 
@@ -129,6 +144,46 @@ class AIReportRequest(BaseModel):
     site_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
 
+# ==================== DATA STORE FALLBACK ====================
+# In-memory store for when MongoDB is not available (Hackathon mode)
+IN_MEMORY_USERS = {}
+
+async def get_user_by_email(email: str):
+    try:
+        # Try MongoDB first
+        return await db.users.find_one({"email": email}, {"_id": 0})
+    except Exception as e:
+        logger.warning(f"MongoDB unavailable, checking in-memory store: {e}")
+        # Fallback to in-memory
+        for user in IN_MEMORY_USERS.values():
+            if user.get("email") == email:
+                return user
+        return None
+
+async def get_user_by_id(user_id: str):
+    try:
+        return await db.users.find_one({"id": user_id}, {"_id": 0})
+    except Exception as e:
+        logger.warning(f"MongoDB unavailable, checking in-memory store: {e}")
+        return IN_MEMORY_USERS.get(user_id)
+
+async def get_user_by_firebase_uid(firebase_uid: str):
+    try:
+        return await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
+    except Exception as e:
+        logger.warning(f"MongoDB unavailable, checking in-memory store: {e}")
+        for user in IN_MEMORY_USERS.values():
+            if user.get("firebase_uid") == firebase_uid:
+                return user
+        return None
+
+async def save_user(user_doc: dict):
+    try:
+        await db.users.insert_one(user_doc)
+    except Exception as e:
+        logger.warning(f"MongoDB unavailable, saving to in-memory store: {e}")
+        IN_MEMORY_USERS[user_doc["id"]] = user_doc
+
 # ==================== AUTH UTILITIES ====================
 
 def hash_password(password: str) -> str:
@@ -176,7 +231,7 @@ async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = De
             from firebase_admin import auth as firebase_auth
             decoded_token = firebase_auth.verify_id_token(token)
             firebase_uid = decoded_token.get('uid')
-            user = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
+            user = await get_user_by_firebase_uid(firebase_uid)
             if user:
                 return user
         except Exception as e:
@@ -200,7 +255,7 @@ async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = De
             # Check if it's a Firebase token
             if 'user_id' in payload or 'firebase' in payload.get('iss', ''):
                 firebase_uid = payload.get('user_id') or payload.get('sub')
-                user = await db.users.find_one({"firebase_uid": firebase_uid}, {"_id": 0})
+                user = await get_user_by_firebase_uid(firebase_uid)
                 if user:
                     return user
     except Exception as e:
@@ -212,7 +267,7 @@ async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = De
         user_id = payload.get("sub")
         if user_id is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        user = await db.users.find_one({"id": user_id}, {"_id": 0})
+        user = await get_user_by_id(user_id)
         if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
         return user
@@ -225,7 +280,8 @@ async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = De
 
 @api_router.post("/auth/register", response_model=TokenResponse)
 async def register(user_data: UserRegister):
-    existing = await db.users.find_one({"email": user_data.email}, {"_id": 0})
+    logger.info(f"Register attempt for email: {user_data.email}")
+    existing = await get_user_by_email(user_data.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     
@@ -239,14 +295,15 @@ async def register(user_data: UserRegister):
     doc['password'] = hash_password(user_data.password)
     doc['created_at'] = doc['created_at'].isoformat()
     
-    await db.users.insert_one(doc)
+    await save_user(doc)
     
     access_token = create_access_token({"sub": user.id, "email": user.email})
     return TokenResponse(access_token=access_token, token_type="bearer", user=user)
 
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin):
-    user_doc = await db.users.find_one({"email": credentials.email}, {"_id": 0})
+    logger.info(f"Login attempt for email: {credentials.email}")
+    user_doc = await get_user_by_email(credentials.email)
     if not user_doc or not verify_password(credentials.password, user_doc['password']):
         raise HTTPException(status_code=400, detail="Invalid email or password")
     
@@ -391,36 +448,51 @@ async def get_tags(entity_type: str, entity_id: str, current_user: dict = Depend
 
 @api_router.post("/ai/query")
 async def ai_natural_language_query(request: AIQueryRequest, current_user: dict = Depends(get_current_user_hybrid)):
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(status_code=503, detail="AI service not configured")
+    if not client_openai:
+        raise HTTPException(status_code=503, detail="AI service not configured (OPENAI_API_KEY missing)")
     
     try:
         # Get context data from Supabase
         context = "You are an AI assistant for a Clinical Data Monitoring System. "
-        if supabase:
-            sites = supabase.table('site_level_summary').select('*').limit(50).execute()
-            context += f"\n\nAvailable site data summary: {len(sites.data)} sites. "
         
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"query-{current_user['id']}-{datetime.now(timezone.utc).isoformat()}",
-            system_message=context + "Answer questions about clinical trial data, site performance, patient data quality, and provide actionable insights."
-        ).with_model("openai", "gpt-5.2")
+        if not supabase:
+             context += "\n\nCRITICAL SYSTEM STATUS: Supabase database is NOT configured. You have NO access to any clinical data. If the user asks about data, sites, patients, or risks, explicitly inform them that Supabase must be configured and data imported first."
+        else:
+            try:
+                # Attempt to get site summary data if available
+                # Note: This table name assumes the standard setup
+                sites = supabase.table('site_level_summary').select('*').limit(20).execute()
+                if sites.data:
+                    context += f"\n\nHere is a sample of site data (Json format): {str(sites.data)}. "
+                else:
+                    context += "\n\nSYSTEM STATUS: Supabase is connected but returned NO data from 'site_level_summary'. The tables might be empty."
+            except Exception as e:
+                context += f"\n\nSYSTEM STATUS: Supabase is connected but a read error occurred: {str(e)}. Tables might be missing."
         
-        user_message = UserMessage(text=request.query)
-        response = await chat.send_message(user_message)
+        response = await client_openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": context + "Answer questions about clinical trial data, site performance, patient data quality, and provide actionable insights. If data is missing, guide the user to setup."} ,
+                {"role": "user", "content": request.query}
+            ]
+        )
         
-        return {"response": response}
+        return {"response": response.choices[0].message.content}
     except Exception as e:
         logger.error(f"AI query error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"AI query failed: {str(e)}")
 
 @api_router.post("/ai/generate-report")
 async def ai_generate_report(request: AIReportRequest, current_user: dict = Depends(get_current_user_hybrid)):
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(status_code=503, detail="AI service not configured")
+    if not client_openai:
+        raise HTTPException(status_code=503, detail="AI service not configured (OPENAI_API_KEY missing)")
     
     try:
+        system_context = "You are an expert clinical data analyst. Generate detailed, professional reports with clear sections, metrics, and actionable recommendations."
+        
+        if not supabase:
+            system_context += " CRITICAL: Supabase is NOT configured. You cannot generate a real report based on data. Inform the user that they need to configure the database first."
+        
         prompt = ""
         if request.report_type == "site_performance":
             prompt = f"Generate a comprehensive site performance report for Site {request.site_id if request.site_id else 'All Sites'}. Include data quality metrics, risk assessment, open issues, and actionable recommendations."
@@ -434,38 +506,41 @@ async def ai_generate_report(request: AIReportRequest, current_user: dict = Depe
         if request.context:
             prompt += f"\n\nContext data: {request.context}"
         
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"report-{current_user['id']}-{datetime.now(timezone.utc).isoformat()}",
-            system_message="You are an expert clinical data analyst. Generate detailed, professional reports with clear sections, metrics, and actionable recommendations."
-        ).with_model("openai", "gpt-5.2")
+        response = await client_openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_context},
+                {"role": "user", "content": prompt}
+            ]
+        )
         
-        user_message = UserMessage(text=prompt)
-        response = await chat.send_message(user_message)
-        
-        return {"report": response, "report_type": request.report_type}
+        return {"report": response.choices[0].message.content, "report_type": request.report_type}
     except Exception as e:
         logger.error(f"AI report generation error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
 @api_router.post("/ai/recommend-actions")
 async def ai_recommend_actions(site_id: Optional[str] = None, current_user: dict = Depends(get_current_user_hybrid)):
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(status_code=503, detail="AI service not configured")
+    if not client_openai:
+        raise HTTPException(status_code=503, detail="AI service not configured (OPENAI_API_KEY missing)")
     
     try:
+        system_context = "You are an AI agent specialized in clinical trial operations. Provide specific, prioritized action recommendations based on risk signals and data quality metrics."
+        
+        if not supabase:
+            system_context += " CRITICAL: Supabase is NOT configured. You cannot provide data-driven recommendations. Inform the user that they need to configure the database first."
+
         prompt = f"Based on the clinical trial data, recommend specific actions for {'site ' + site_id if site_id else 'all sites'}. Focus on: 1) Reducing open queries, 2) Improving data quality, 3) Addressing high-risk indicators, 4) Optimizing CRA monitoring activities."
         
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"actions-{current_user['id']}-{datetime.now(timezone.utc).isoformat()}",
-            system_message="You are an AI agent specialized in clinical trial operations. Provide specific, prioritized action recommendations based on risk signals and data quality metrics."
-        ).with_model("openai", "gpt-5.2")
+        response = await client_openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_context},
+                {"role": "user", "content": prompt}
+            ]
+        )
         
-        user_message = UserMessage(text=prompt)
-        response = await chat.send_message(user_message)
-        
-        return {"recommendations": response}
+        return {"recommendations": response.choices[0].message.content}
     except Exception as e:
         logger.error(f"AI recommendations error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Recommendations failed: {str(e)}")
@@ -549,19 +624,13 @@ async def health_check():
         "status": "healthy",
         "database": "connected",
         "supabase": supabase_status,
-        "ai_service": "configured" if EMERGENT_LLM_KEY else "not_configured"
+        "ai_service": "configured" if client_openai else "not_configured"
     }
 
 # Include router
 app.include_router(api_router)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
