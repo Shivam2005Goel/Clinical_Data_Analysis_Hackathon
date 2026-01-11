@@ -144,6 +144,33 @@ class AIReportRequest(BaseModel):
     site_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
 
+# ==================== SUPABASE HELPER ====================
+
+async def fetch_all_supabase_data(table_name: str, batch_size: int = 1000):
+    all_data = []
+    start = 0
+    while True:
+        try:
+            # Fetch a batch
+            response = supabase.table(table_name).select('*').range(start, start + batch_size - 1).execute()
+            batch_data = response.data
+            
+            if not batch_data:
+                break
+                
+            all_data.extend(batch_data)
+            
+            # If we got less than batch_size, we've reached the end
+            if len(batch_data) < batch_size:
+                break
+                
+            start += batch_size
+        except Exception as e:
+            logger.error(f"Error fetching batch from {table_name}: {str(e)}")
+            break
+            
+    return all_data
+
 # ==================== DATA STORE FALLBACK ====================
 # In-memory store for when MongoDB is not available (Hackathon mode)
 IN_MEMORY_USERS = {}
@@ -322,8 +349,8 @@ async def get_high_risk_sites(current_user: dict = Depends(get_current_user_hybr
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured. Please add SUPABASE_URL and SUPABASE_KEY to environment variables.")
     try:
-        response = supabase.table('High Risk Sites').select('*').execute()
-        return {"data": response.data, "count": len(response.data)}
+        data = await fetch_all_supabase_data('High Risk Sites')
+        return {"data": data, "count": len(data)}
     except Exception as e:
         logger.error(f"Error fetching high risk sites: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching data: {str(e)}")
@@ -333,8 +360,8 @@ async def get_patient_level_data(current_user: dict = Depends(get_current_user_h
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured. Please add SUPABASE_URL and SUPABASE_KEY to environment variables.")
     try:
-        response = supabase.table('Patient Data').select('*').execute()
-        return {"data": response.data, "count": len(response.data)}
+        data = await fetch_all_supabase_data('Patient Data')
+        return {"data": data, "count": len(data)}
     except Exception as e:
         logger.error(f"Error fetching patient data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching data: {str(e)}")
@@ -344,8 +371,8 @@ async def get_site_level_data(current_user: dict = Depends(get_current_user_hybr
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured. Please add SUPABASE_URL and SUPABASE_KEY to environment variables.")
     try:
-        response = supabase.table('Sites Data').select('*').execute()
-        return {"data": response.data, "count": len(response.data)}
+        data = await fetch_all_supabase_data('Sites Data')
+        return {"data": data, "count": len(data)}
     except Exception as e:
         logger.error(f"Error fetching site data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching data: {str(e)}")
@@ -355,11 +382,8 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user_hybr
     if not supabase:
         raise HTTPException(status_code=503, detail="Supabase not configured")
     try:
-        sites_response = supabase.table('Sites Data').select('*').execute()
-        patients_response = supabase.table('Patient Data').select('*').execute()
-        
-        sites = sites_response.data
-        patients = patients_response.data
+        sites = await fetch_all_supabase_data('Sites Data')
+        patients = await fetch_all_supabase_data('Patient Data')
         
         high_risk_count = len([s for s in sites if s.get('Risk_Level') == 'High'])
         total_sites = len(sites)
