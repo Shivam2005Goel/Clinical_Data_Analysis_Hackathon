@@ -1,7 +1,22 @@
-# Clinical Data Monitoring System - Complete Setup Guide
+# 🧬Clinical Data Monitoring System - Complete Setup Guide 🩺
 
 ## Overview
 A comprehensive Clinical Data Monitoring System with **Supabase** for clinical data storage and **Firebase Authentication** for secure user access.
+
+## Register/Login Page
+![Alt text for the image](./Images/dashboard.png)
+## Dashboard
+![Alt text for the image](./Images/dashboard.png)
+## Sites Risk Analysis
+![Alt text for the image](./Images/Sites%20Risk%20Analysis.png)
+## Patient Analysis
+![Alt text for the image](./Images/Patient%20Analysis.png)
+## AI Agents
+![Alt text for the image](./Images/AI%20Agents.png)
+## Data Quality Analysis
+![Alt text for the image](./Images/Data%20Quality%20Analysis.png)
+## Generate Reports
+![Alt text for the image](./Images/Generate%20Reports.png)
 
 ## ✅ What's Already Configured
 
@@ -348,18 +363,5 @@ SUPABASE_URL=https://qlavibrdivegeecqzxzn.supabase.co
 SUPABASE_KEY=<your-supabase-key>
 FIREBASE_ADMIN_CONFIG_PATH=/app/backend/firebase-admin.json
 ```
-## Register/Login Page
-![Alt text for the image](./Images/dashboard.png)
-## Dashboard
-![Alt text for the image](./Images/dashboard.png)
-## Sites Risk Analysis
-![Alt text for the image](./Images/Sites%20Risk%20Analysis.png)
-## Patient Analysis
-![Alt text for the image](./Images/Patient%20Analysis.png)
-## AI Agents
-![Alt text for the image](./Images/AI%20Agents.png)
-## Data Quality Analysis
-![Alt text for the image](./Images/Data%20Quality%20Analysis.png)
-## Generate Reports
-![Alt text for the image](./Images/Generate%20Reports.png)
+
 
