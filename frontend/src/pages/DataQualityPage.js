@@ -33,10 +33,10 @@ const DataQualityPage = () => {
   };
 
   const getIssuesSummary = () => {
-    const totalOpenIssues = sitesData.reduce((sum, site) => sum + (site.Total_Open_Issues || 0), 0);
-    const totalMissingPages = sitesData.reduce((sum, site) => sum + (site.Total_Missing_Pages || 0), 0);
-    const totalUncodedMedDRA = sitesData.reduce((sum, site) => sum + (site.Total_Uncoded_MedDRA || 0), 0);
-    const totalLabIssues = sitesData.reduce((sum, site) => sum + (site.Total_Lab_Issues || 0), 0);
+    const totalOpenIssues = sitesData.reduce((sum, site) => sum + Number(site.Total_Open_Issues || 0), 0);
+    const totalMissingPages = sitesData.reduce((sum, site) => sum + Number(site.Total_Missing_Pages || 0), 0);
+    const totalUncodedMedDRA = sitesData.reduce((sum, site) => sum + Number(site.Total_Uncoded_MedDRA || 0), 0);
+    const totalLabIssues = sitesData.reduce((sum, site) => sum + Number(site.Total_Lab_Issues || 0), 0);
 
     return [
       { category: 'Open Issues', count: totalOpenIssues, color: '#EF4444' },

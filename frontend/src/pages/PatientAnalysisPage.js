@@ -64,6 +64,73 @@ const PatientAnalysisPage = () => {
 
   return (
     <div className="space-y-6" data-testid="patient-analysis-page">
+      <h2 className="text-2xl font-semibold" style={{ fontFamily: 'Manrope, sans-serif' }}>
+        Patient Analysis
+      </h2>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <Card className="border-l-4 border-l-primary shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-600">Total Patients</p>
+              <Search className="h-5 w-5 text-primary opacity-70" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-slate-900">{patients.length}</div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-l-4 border-l-emerald-500 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-600">Clean Patients</p>
+              <Badge variant="success" className="h-2 w-2 rounded-full p-0" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-emerald-600">
+              {patients.filter((p) => p.Clean_Patient_Status === 'Clean').length}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-l-4 border-l-destructive shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-600">Patients with Issues</p>
+              <Badge variant="destructive" className="h-2 w-2 rounded-full p-0" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-red-600">
+              {patients.filter((p) => p.total_open_issues > 0).length}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-l-4 border-l-blue-500 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-600">Avg DQI</p>
+              <div className="h-5 w-5 rounded-full bg-blue-100 flex items-center justify-center">
+                <div className="h-2 w-2 rounded-full bg-blue-500" />
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-blue-600">
+              {patients.length > 0
+                ? (
+                  patients.reduce((sum, p) => sum + (p.Data_Quality_Index || 0), 0) / patients.length
+                ).toFixed(1)
+                : 0}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       <div className="flex flex-col md:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -129,13 +196,12 @@ const PatientAnalysisPage = () => {
                 </td>
                 <td className="p-4 align-middle">
                   <span
-                    className={`font-semibold ${
-                      patient.Data_Quality_Index >= 90
+                    className={`font-semibold ${patient.Data_Quality_Index >= 90
                         ? 'text-emerald-600'
                         : patient.Data_Quality_Index >= 70
-                        ? 'text-amber-600'
-                        : 'text-red-600'
-                    }`}
+                          ? 'text-amber-600'
+                          : 'text-red-600'
+                      }`}
                   >
                     {patient.Data_Quality_Index || 0}
                   </span>
@@ -158,41 +224,6 @@ const PatientAnalysisPage = () => {
         </Card>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Patient Summary</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <p className="text-sm text-slate-500">Total Patients</p>
-              <p className="text-2xl font-bold">{patients.length}</p>
-            </div>
-            <div>
-              <p className="text-sm text-slate-500">Clean Patients</p>
-              <p className="text-2xl font-bold text-emerald-600">
-                {patients.filter((p) => p.Clean_Patient_Status === 'Clean').length}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-slate-500">Patients with Issues</p>
-              <p className="text-2xl font-bold text-red-600">
-                {patients.filter((p) => p.total_open_issues > 0).length}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-slate-500">Avg DQI</p>
-              <p className="text-2xl font-bold text-primary">
-                {patients.length > 0
-                  ? (
-                      patients.reduce((sum, p) => sum + (p.Data_Quality_Index || 0), 0) / patients.length
-                    ).toFixed(1)
-                  : 0}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 };
