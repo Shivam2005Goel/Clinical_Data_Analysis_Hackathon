@@ -19,3 +19,8 @@ frontend/.env
 # OS generated files
 .DS_Store
 Thumbs.db
+*.bak
+*.tmp
+*.log
+*.swp
+desktop.ini
