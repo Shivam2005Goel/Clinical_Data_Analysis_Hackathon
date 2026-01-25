@@ -40,6 +40,14 @@ export const AuthProvider = ({ children }) => {
       }
       setLoading(false);
     }
+
+    // DEV BYPASS: Force a user if none found
+    if (!checkAuth() && !isFirebaseConfigured()) {
+      console.log("DEV BYPASS ACTIVE");
+      const mockUser = { full_name: "Test User", role: "Developer" };
+      setUser(mockUser);
+      setIsAuthenticated(true);
+    }
   }, []);
 
   const login = (userData, token) => {
