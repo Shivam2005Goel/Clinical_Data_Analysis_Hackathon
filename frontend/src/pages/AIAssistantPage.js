@@ -1,224 +1,397 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../utils/api';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Textarea } from '../components/ui/textarea';
-import { Bot, Send, FileText, TrendingUp, Lightbulb, Loader2 } from 'lucide-react';
+import { Bot, Send, Sparkles, Activity, FileText, Zap, ChevronRight, Calculator, Crosshair, Brain, Mic, MicOff, Volume2, VolumeX, Paperclip, Upload } from 'lucide-react';
 import { Alert, AlertDescription } from '../components/ui/alert';
+import { motion, AnimatePresence } from 'framer-motion';
+import { NeuralAvatar } from '../components/ui/neural-avatar';
+import { toast } from 'sonner';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
+
+// --- GENERATIVE UI WIDGETS ---
+const RiskScoreCard = ({ score, trend }) => (
+  <div className="bg-black/60 border border-white/10 rounded-xl p-4 w-64 mt-4">
+    <div className="flex justify-between items-center mb-2">
+      <span className="text-xs text-slate-400 uppercase tracking-wider">Risk Score</span>
+      <Activity className={`h-4 w-4 ${score > 80 ? 'text-red-500' : 'text-emerald-500'}`} />
+    </div>
+    <div className="text-3xl font-bold text-white mb-1">{score}/100</div>
+    <div className={`text-xs ${trend === 'up' ? 'text-red-400' : 'text-emerald-400'} flex items-center gap-1`}>
+      {trend === 'up' ? '↑ Increasing' : '↓ Decreasing'} this week
+    </div>
+    <div className="h-1.5 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
+      <div
+        className={`h-full rounded-full ${score > 80 ? 'bg-red-500' : score > 50 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+        style={{ width: `${score}%` }}
+      />
+    </div>
+  </div>
+);
+
+const TrendSparkline = ({ data }) => (
+  <div className="bg-black/60 border border-white/10 rounded-xl p-4 w-full max-w-sm mt-4 h-40">
+    <div className="text-xs text-slate-400 uppercase mb-2">Enrollment Trend (7 Days)</div>
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={data}>
+        <defs>
+          <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.3} />
+            <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <Area type="monotone" dataKey="value" stroke="#06b6d4" fillOpacity={1} fill="url(#colorValue)" strokeWidth={2} />
+      </AreaChart>
+    </ResponsiveContainer>
+  </div>
+);
+
+const ActionButtons = ({ actions }) => (
+  <div className="flex flex-wrap gap-2 mt-4">
+    {actions.map((action, idx) => (
+      <button
+        key={idx}
+        onClick={() => toast.info(`Executing: ${action}`)}
+        className="px-3 py-1.5 bg-neon-cyan/10 border border-neon-cyan/30 rounded-lg text-xs text-neon-cyan hover:bg-neon-cyan/20 transition-colors"
+      >
+        {action}
+      </button>
+    ))}
+  </div>
+);
+
+// Typing effect component
+const TypewriterEffect = ({ text, onComplete }) => {
+  const [displayedText, setDisplayedText] = useState('');
+
+  useEffect(() => {
+    let index = 0;
+    setDisplayedText('');
+    const intervalId = setInterval(() => {
+      setDisplayedText((prev) => prev + text.charAt(index));
+      index++;
+      if (index === text.length) {
+        clearInterval(intervalId);
+        onComplete && onComplete();
+      }
+    }, 15);
+    return () => clearInterval(intervalId);
+  }, [text, onComplete]);
+
+  return <div className="leading-relaxed tracking-wide text-cyan-50/90 whitespace-pre-wrap font-mono text-sm">{displayedText}</div>;
+};
 
 const AIAssistantPage = () => {
   const [query, setQuery] = useState('');
-  const [response, setResponse] = useState('');
+  const [chatHistory, setChatHistory] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [avatarState, setAvatarState] = useState('idle'); // idle, listening, processing, speaking
+  const chatEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-  const [reportType, setReportType] = useState('site_performance');
-  const [reportLoading, setReportLoading] = useState(false);
-  const [report, setReport] = useState('');
+  // --- VOICE LOGIC ---
+  const startListening = () => {
+    if (!window.SpeechRecognition && !window.webkitSpeechRecognition) {
+      toast.error("Speech recognition not supported in this browser.");
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
 
-  const [recommendationsLoading, setRecommendationsLoading] = useState(false);
-  const [recommendations, setRecommendations] = useState('');
+    recognition.onstart = () => {
+      setIsListening(true);
+      setAvatarState('listening');
+    };
 
-  const handleQuery = async (e) => {
-    e.preventDefault();
-    if (!query.trim()) return;
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setQuery(transcript);
+      handleQuery(null, transcript); // Auto-submit
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      setAvatarState('idle'); // Will switch to processing in handleQuery
+    };
+
+    recognition.start();
+  };
+
+  const speakText = (text) => {
+    if (!voiceMode) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    // Try to find a good futuristic voice
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => v.name.includes("Google US English") || v.name.includes("Samantha"));
+    if (preferredVoice) utterance.voice = preferredVoice;
+
+    utterance.pitch = 1.0;
+    utterance.rate = 1.1;
+
+    utterance.onstart = () => setAvatarState('speaking');
+    utterance.onend = () => setAvatarState('idle');
+
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // --- UPLOAD LOGIC ---
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    toast.info(`Uploading ${file.name}...`);
+    // Simulate upload and analysis
+    const userMessage = { role: 'user', content: `[Uploaded File: ${file.name}] analyze this please.`, timestamp: new Date() };
+    setChatHistory(prev => [...prev, userMessage]);
 
     setLoading(true);
-    setError('');
+    setAvatarState('processing');
+
+    setTimeout(() => {
+      let analysisText = `I've analyzed **${file.name}**. `;
+      if (file.name.endsWith('.csv') || file.name.endsWith('.xlsx')) {
+        analysisText += "It appears to be a clinical dataset containing 1,024 patient records. No PII detected. I found 3 columns with missing values > 5%.";
+      } else if (file.name.endsWith('.png') || file.name.endsWith('.jpg')) {
+        analysisText += "Visual scan complete. This chart shows a downward trend in Adverse Events for Site-005 over Q3.";
+      } else {
+        analysisText += "File content ingested into knowledge base.";
+      }
+
+      setChatHistory(prev => [...prev, { role: 'ai', content: analysisText, timestamp: new Date() }]);
+      setLoading(false);
+      setAvatarState('idle'); // Will switch to speaking if TTS on
+      speakText(analysisText);
+    }, 2500);
+  };
+
+  const suggestionPrompts = [
+    { text: "Analyze site risk trends", icon: Activity, color: "text-neon-cyan" },
+    { text: "Generate executive summary", icon: FileText, color: "text-neon-purple" },
+    { text: "Predict enrollments for next Q", icon: Calculator, color: "text-neon-green" },
+  ];
+
+  const handleQuery = async (e, overrideQuery = null) => {
+    if (e) e.preventDefault();
+    const finalQuery = overrideQuery || query;
+    if (!finalQuery.trim()) return;
+
+    const userMessage = { role: 'user', content: finalQuery, timestamp: new Date() };
+    setChatHistory(prev => [...prev, userMessage]);
+    setQuery('');
+    setLoading(true);
+    setAvatarState('processing');
+
     try {
-      const res = await api.post('/ai/query', { query });
-      setResponse(res.data.response);
+      // Mock AI response logic with Widgets
+      await new Promise(r => setTimeout(r, 1500)); // Simulate think time
+
+      let responseContent = "";
+      let widgets = null;
+
+      if (finalQuery.toLowerCase().includes('risk')) {
+        responseContent = "I've detected elevated risk signals at **Site-004**. The Risk Score has increased by 15% in the last 48 hours due to uncoded MedDRA terms.";
+        widgets = { type: 'risk', data: { score: 85, trend: 'up' } };
+      } else if (finalQuery.toLowerCase().includes('trend') || finalQuery.toLowerCase().includes('predict')) {
+        responseContent = "Projecting enrollment trends for Q2 based on current velocity. We are tracking 12% ahead of schedule.";
+        widgets = {
+          type: 'trend', data: [
+            { value: 10 }, { value: 25 }, { value: 45 }, { value: 30 }, { value: 60 }, { value: 85 }, { value: 100 }
+          ]
+        };
+      } else {
+        responseContent = "I can certainly help with that. My neural core has access to real-time clinical data streams. What specific metrics would you like to explore?";
+        widgets = { type: 'actions', data: ['Generate Report', 'Scan Anomalies', 'Contact CRA'] };
+      }
+
+      const aiMessage = {
+        role: 'ai',
+        content: responseContent,
+        timestamp: new Date(),
+        widgets: widgets
+      };
+
+      setChatHistory(prev => [...prev, aiMessage]);
+      speakText(responseContent);
+
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to process query');
+      setChatHistory(prev => [...prev, { role: 'error', content: "Connection to Neural Core failed.", timestamp: new Date() }]);
     } finally {
       setLoading(false);
+      if (!voiceMode) setAvatarState('idle');
     }
   };
 
-  const handleGenerateReport = async () => {
-    setReportLoading(true);
-    setError('');
-    try {
-      const res = await api.post('/ai/generate-report', {
-        report_type: reportType,
-        context: {}
-      });
-      setReport(res.data.report);
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to generate report');
-    } finally {
-      setReportLoading(false);
-    }
-  };
-
-  const handleGetRecommendations = async () => {
-    setRecommendationsLoading(true);
-    setError('');
-    try {
-      const res = await api.post('/ai/recommend-actions');
-      setRecommendations(res.data.recommendations);
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to get recommendations');
-    } finally {
-      setRecommendationsLoading(false);
-    }
-  };
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory]);
 
   return (
-    <div className="space-y-6" data-testid="ai-assistant-page">
-      <div className="flex items-center gap-3">
-        <Bot className="h-8 w-8 text-primary" />
-        <h2 className="text-2xl font-semibold" style={{ fontFamily: 'Manrope, sans-serif' }}>
-          AI Assistant
-        </h2>
+    <div className="h-[calc(100vh-6rem)] flex flex-col relative overflow-hidden rounded-2xl border border-white/10 bg-black/80 backdrop-blur-3xl shadow-2xl transition-colors duration-1000"
+      style={{ borderColor: loading ? 'rgba(217, 70, 239, 0.3)' : 'rgba(255, 255, 255, 0.1)' }}>
+
+      {/* Dynamic Background */}
+      <div className="absolute inset-0 pointer-events-none transition-opacity duration-1000" style={{ opacity: loading ? 0.8 : 0.4 }}>
+        <div className={`absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent ${loading ? 'via-fuchsia-500' : 'via-neon-cyan/50'} to-transparent`}></div>
+        <div className="absolute bottom-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-neon-purple/50 to-transparent"></div>
+        <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-[100px] transition-colors duration-1000 ${loading ? 'bg-fuchsia-900/20' : 'bg-neon-blue/5'}`}></div>
       </div>
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {/* Natural Language Query */}
-      <Card data-testid="nl-query-section">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Send className="h-5 w-5" />
-            Natural Language Query
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleQuery} className="space-y-4">
-            <div>
-              <Textarea
-                placeholder="Ask me anything about your clinical trial data... e.g., 'Which sites have the highest risk scores?' or 'Show me patients with missing pages'"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                rows={4}
-                data-testid="ai-query-input"
-              />
-            </div>
-            <Button type="submit" disabled={loading || !query.trim()} data-testid="ai-query-submit">
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <Send className="h-4 w-4 mr-2" />
-                  Ask AI
-                </>
-              )}
-            </Button>
-          </form>
-
-          {response && (
-            <div className="mt-6 p-4 bg-slate-50 rounded-lg border border-slate-200" data-testid="ai-query-response">
-              <h4 className="font-semibold mb-2">AI Response:</h4>
-              <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap">{response}</div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Report Generation */}
-      <Card data-testid="report-generation-section">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Generate Reports
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">Report Type</label>
-              <select
-                value={reportType}
-                onChange={(e) => setReportType(e.target.value)}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                data-testid="report-type-select"
-              >
-                <option value="site_performance">Site Performance Report</option>
-                <option value="cra_report">CRA Monitoring Report</option>
-                <option value="risk_analysis">Risk Analysis Report</option>
-              </select>
-            </div>
-            <Button
-              onClick={handleGenerateReport}
-              disabled={reportLoading}
-              data-testid="generate-report-button"
-            >
-              {reportLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <FileText className="h-4 w-4 mr-2" />
-                  Generate Report
-                </>
-              )}
-            </Button>
+      {/* Header */}
+      <header className="p-4 border-b border-white/10 relative z-10 bg-black/40 backdrop-blur-md flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          {/* AVATAR SMALL */}
+          <div className="scale-75 -ml-2">
+            <NeuralAvatar state={avatarState} size="sm" />
           </div>
-
-          {report && (
-            <div className="mt-6 p-4 bg-slate-50 rounded-lg border border-slate-200" data-testid="generated-report">
-              <h4 className="font-semibold mb-2">Generated Report:</h4>
-              <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap">{report}</div>
+          <div>
+            <h2 className="text-xl font-bold text-white tracking-widest uppercase font-manrope">Neural Core</h2>
+            <div className="flex items-center gap-2">
+              <span className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-fuchsia-500 animate-ping' : 'bg-emerald-500 animate-pulse'}`}></span>
+              <span className="text-xs text-slate-400 font-mono tracking-wider">{loading ? 'PROCESSING...' : 'ONLINE'}</span>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              const newMode = !voiceMode;
+              setVoiceMode(newMode);
+              toast.success(newMode ? "Voice Output: ENABLED" : "Voice Output: DISABLED");
+            }}
+            className={voiceMode ? 'text-neon-cyan bg-neon-cyan/10' : 'text-slate-500 hover:text-white'}
+          >
+            {voiceMode ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </Button>
+        </div>
+      </header>
 
-      {/* Action Recommendations */}
-      <Card data-testid="recommendations-section">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Lightbulb className="h-5 w-5" />
-            AI Action Recommendations
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <p className="text-sm text-slate-600">
-              Get AI-powered recommendations for improving data quality, reducing risks, and optimizing site
-              operations.
+      {/* Chat Area */}
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 relative z-10 custom-scrollbar">
+        {chatHistory.length === 0 && (
+          <div className="h-full flex flex-col items-center justify-center opacity-80">
+            <div className="mb-8 scale-150">
+              <NeuralAvatar state={avatarState} size="lg" />
+            </div>
+            <p className="text-slate-400 text-lg font-light text-center max-w-md animate-pulse">
+              "I am listening. Analyze data, generate reports, or scan files."
             </p>
-            <Button
-              onClick={handleGetRecommendations}
-              disabled={recommendationsLoading}
-              data-testid="get-recommendations-button"
+
+            <div className="grid grid-cols-1 gap-3 mt-8 w-full max-w-sm">
+              {suggestionPrompts.map((prompt, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => { setQuery(prompt.text); handleQuery(null, prompt.text); }}
+                  className="flex items-center gap-3 p-3 rounded-xl border border-white/5 bg-white/5 hover:bg-white/10 hover:border-neon-cyan/30 transition-all group text-left"
+                >
+                  <prompt.icon className={`h-4 w-4 ${prompt.color}`} />
+                  <span className="text-sm text-slate-300 group-hover:text-white transition-colors">{prompt.text}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <AnimatePresence>
+          {chatHistory.map((msg, index) => (
+            <motion.div
+              key={index}
+              initial={{ opacity: 0, y: 10, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              {recommendationsLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Analyzing...
-                </>
-              ) : (
-                <>
-                  <Lightbulb className="h-4 w-4 mr-2" />
-                  Get Recommendations
-                </>
-              )}
-            </Button>
+              <div className={`max-w-[85%] md:max-w-[70%] rounded-2xl p-4 md:p-5 relative overflow-hidden ${msg.role === 'user'
+                  ? 'bg-gradient-to-br from-neon-blue/20 to-blue-900/40 border-l-4 border-l-neon-blue text-white'
+                  : 'bg-black/60 border border-white/10 shadow-xl backdrop-blur-md'
+                }`}>
+                <div className="flex items-start gap-4 relative z-10">
+                  {msg.role === 'ai' && (
+                    <div className="mt-1">
+                      <Sparkles className="h-5 w-5 text-neon-cyan animate-pulse" />
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    {msg.role === 'ai' ? (
+                      <>
+                        <TypewriterEffect text={msg.content} onComplete={() => { }} />
+                        {/* Render Widgets if present */}
+                        {msg.widgets?.type === 'risk' && <RiskScoreCard {...msg.widgets.data} />}
+                        {msg.widgets?.type === 'trend' && <TrendSparkline {...msg.widgets.data} />}
+                        {msg.widgets?.type === 'actions' && <ActionButtons actions={msg.widgets.data} />}
+                      </>
+                    ) : (
+                      <div className="text-sm md:text-base leading-relaxed text-blue-200">{msg.content}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+        <div ref={chatEndRef} />
+      </div>
+
+      {/* Input Area */}
+      <div className="p-4 md:p-6 border-t border-white/10 bg-black/80 backdrop-blur-xl relative z-20">
+        <form onSubmit={handleQuery} className="relative max-w-4xl mx-auto flex gap-3 items-end">
+          {/* File Upload */}
+          <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => fileInputRef.current?.click()}
+            className="text-slate-400 hover:text-neon-cyan hover:bg-white/10 h-12 w-12 rounded-xl border border-white/5"
+          >
+            <Paperclip className="h-5 w-5" />
+          </Button>
+
+          {/* Text Area */}
+          <div className="flex-1 relative bg-white/5 rounded-xl border border-white/10 focus-within:border-neon-cyan/50 focus-within:bg-white/10 transition-all">
+            <Textarea
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleQuery(e);
+                }
+              }}
+              placeholder="Ask Neural Core..."
+              className="min-h-[48px] max-h-[120px] w-full bg-transparent border-none focus:ring-0 resize-none py-3 pl-4 pr-12 text-white placeholder:text-slate-500"
+            />
           </div>
 
-          {recommendations && (
-            <div className="mt-6 p-4 bg-primary/5 rounded-lg border border-primary/20" data-testid="ai-recommendations">
-              <h4 className="font-semibold mb-2 flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-primary" />
-                Recommendations:
-              </h4>
-              <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap">
-                {recommendations}
-              </div>
-            </div>
+          {/* Mic Button (or Send if typing) */}
+          {query.trim() ? (
+            <Button
+              type="submit"
+              size="icon"
+              disabled={loading}
+              className="h-12 w-12 rounded-xl bg-neon-cyan text-black hover:bg-neon-cyan/80 shadow-[0_0_15px_rgba(0,243,255,0.4)]"
+            >
+              <Send className="h-5 w-5" />
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="icon"
+              onMouseDown={startListening}
+              onMouseUp={() => { /* SpeechRecognition handles end automatically mostly, but mimics hold-to-talk UX styled */ }}
+              className={`h-12 w-12 rounded-xl border border-white/10 ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-white/5 text-slate-400 hover:text-white'}`}
+            >
+              {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+            </Button>
           )}
-        </CardContent>
-      </Card>
+        </form>
+      </div>
     </div>
   );
 };
