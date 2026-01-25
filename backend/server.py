@@ -476,23 +476,40 @@ async def ai_natural_language_query(request: AIQueryRequest, current_user: dict 
         raise HTTPException(status_code=503, detail="AI service not configured (OPENAI_API_KEY missing)")
     
     try:
+        logger.info(f"AI Query received: {request.query}")
         # Get context data from Supabase
         context = "You are an AI assistant for a Clinical Data Monitoring System. "
         
         if not supabase:
+             logger.warning("Supabase NOT configured for AI context")
              context += "\n\nCRITICAL SYSTEM STATUS: Supabase database is NOT configured. You have NO access to any clinical data. If the user asks about data, sites, patients, or risks, explicitly inform them that Supabase must be configured and data imported first."
         else:
             try:
-                # Attempt to get site summary data if available
-                # Note: This table name assumes the standard setup
-                sites = supabase.table('site_level_summary').select('*').limit(20).execute()
+                # Fetch summary data from all key tables to provide comprehensive context
+                logger.info("Fetching context from Supabase tables")
+                
+                # 1. Sites Data (General info)
+                sites = supabase.table('Sites Data').select('*').limit(10).execute()
                 if sites.data:
-                    context += f"\n\nHere is a sample of site data (Json format): {str(sites.data)}. "
-                else:
-                    context += "\n\nSYSTEM STATUS: Supabase is connected but returned NO data from 'site_level_summary'. The tables might be empty."
+                    context += f"\n\n[Sites Data Sample]: {str(sites.data)}"
+                
+                # 2. High Risk Sites (Critical info)
+                high_risk = supabase.table('High Risk Sites').select('*').limit(10).execute()
+                if high_risk.data:
+                    context += f"\n\n[High Risk Sites Sample]: {str(high_risk.data)}"
+                
+                # 3. Patient Data (Data quality info)
+                patients = supabase.table('Patient Data').select('*').limit(10).execute()
+                if patients.data:
+                    context += f"\n\n[Patient Data Sample]: {str(patients.data)}"
+                
+                logger.info("Successfully fetched multi-table context")
+
             except Exception as e:
-                context += f"\n\nSYSTEM STATUS: Supabase is connected but a read error occurred: {str(e)}. Tables might be missing."
+                logger.error(f"Supabase context fetch error: {str(e)}")
+                context += f"\n\nSYSTEM STATUS: Supabase read error: {str(e)}. Some tables may be missing or empty."
         
+        logger.info("Calling OpenAI API...")
         response = await client_openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -500,10 +517,11 @@ async def ai_natural_language_query(request: AIQueryRequest, current_user: dict 
                 {"role": "user", "content": request.query}
             ]
         )
+        logger.info("AI response received successfully")
         
         return {"response": response.choices[0].message.content}
     except Exception as e:
-        logger.error(f"AI query error: {str(e)}")
+        logger.error(f"AI query error in server.py: {str(e)}")
         raise HTTPException(status_code=500, detail=f"AI query failed: {str(e)}")
 
 @api_router.post("/ai/generate-report")

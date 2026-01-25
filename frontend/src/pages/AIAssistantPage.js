@@ -188,24 +188,23 @@ const AIAssistantPage = () => {
     setAvatarState('processing');
 
     try {
-      // Mock AI response logic with Widgets
-      await new Promise(r => setTimeout(r, 1500)); // Simulate think time
+      // Call the real AI API
+      const response = await api.post('/ai/query', { query: finalQuery });
+      const responseData = response.data;
 
-      let responseContent = "";
+      let responseContent = responseData.response;
       let widgets = null;
 
-      if (finalQuery.toLowerCase().includes('risk')) {
-        responseContent = "I've detected elevated risk signals at **Site-004**. The Risk Score has increased by 15% in the last 48 hours due to uncoded MedDRA terms.";
-        widgets = { type: 'risk', data: { score: 85, trend: 'up' } };
-      } else if (finalQuery.toLowerCase().includes('trend') || finalQuery.toLowerCase().includes('predict')) {
-        responseContent = "Projecting enrollment trends for Q2 based on current velocity. We are tracking 12% ahead of schedule.";
+      // Intelligent widget selection based on response content
+      if (responseContent.toLowerCase().includes('site') && responseContent.toLowerCase().includes('risk')) {
+        widgets = { type: 'risk', data: { score: 85, trend: 'up' } }; // Default high risk widget if site mentioned
+      } else if (responseContent.toLowerCase().includes('trend') || responseContent.toLowerCase().includes('predict')) {
         widgets = {
           type: 'trend', data: [
             { value: 10 }, { value: 25 }, { value: 45 }, { value: 30 }, { value: 60 }, { value: 85 }, { value: 100 }
           ]
         };
       } else {
-        responseContent = "I can certainly help with that. My neural core has access to real-time clinical data streams. What specific metrics would you like to explore?";
         widgets = { type: 'actions', data: ['Generate Report', 'Scan Anomalies', 'Contact CRA'] };
       }
 
@@ -220,7 +219,10 @@ const AIAssistantPage = () => {
       speakText(responseContent);
 
     } catch (err) {
-      setChatHistory(prev => [...prev, { role: 'error', content: "Connection to Neural Core failed.", timestamp: new Date() }]);
+      console.error("AI Error:", err);
+      const errorMessage = err.response?.data?.detail || "Connection to Neural Core failed.";
+      setChatHistory(prev => [...prev, { role: 'error', content: errorMessage, timestamp: new Date() }]);
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
       if (!voiceMode) setAvatarState('idle');
@@ -308,8 +310,8 @@ const AIAssistantPage = () => {
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div className={`max-w-[85%] md:max-w-[70%] rounded-2xl p-4 md:p-5 relative overflow-hidden ${msg.role === 'user'
-                  ? 'bg-gradient-to-br from-neon-blue/20 to-blue-900/40 border-l-4 border-l-neon-blue text-white'
-                  : 'bg-black/60 border border-white/10 shadow-xl backdrop-blur-md'
+                ? 'bg-gradient-to-br from-neon-blue/20 to-blue-900/40 border-l-4 border-l-neon-blue text-white'
+                : 'bg-black/60 border border-white/10 shadow-xl backdrop-blur-md'
                 }`}>
                 <div className="flex items-start gap-4 relative z-10">
                   {msg.role === 'ai' && (
