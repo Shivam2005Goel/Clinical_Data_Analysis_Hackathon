@@ -2,9 +2,11 @@ import React, { useEffect, useState } from 'react';
 import api from '../utils/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Download, FileText, Filter, FileSpreadsheet, Sparkles } from 'lucide-react';
+import { Download, FileText, Filter, FileSpreadsheet, Sparkles, Mail, X } from 'lucide-react';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { motion } from 'framer-motion';
+import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
 import {
   generateSitesReportPDF,
   generatePatientsReportPDF,
@@ -18,6 +20,12 @@ const ReportsPage = () => {
   const [error, setError] = useState('');
   const [generating, setGenerating] = useState('');
 
+  // Email dialog state
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [emailAddress, setEmailAddress] = useState('');
+  const [emailReportType, setEmailReportType] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailSuccess, setEmailSuccess] = useState('');
   useEffect(() => {
     fetchData();
   }, []);
@@ -105,6 +113,106 @@ const ReportsPage = () => {
       generateSummaryReportPDF(sitesData, patientsData);
       setGenerating('');
     }, 500);
+  };
+
+  // Email functions
+  const openEmailDialog = (reportType) => {
+    setEmailReportType(reportType);
+    setEmailDialogOpen(true);
+    setEmailSuccess('');
+  };
+
+  const generateReportContent = (reportType) => {
+    let content = '';
+    const timestamp = new Date().toLocaleString();
+
+    switch (reportType) {
+      case 'sites':
+        content = `Site-Level Report\nGenerated: ${timestamp}\n\n`;
+        content += `Total Sites: ${sitesData.length}\n`;
+        content += `High Risk Sites: ${sitesData.filter(s => s.Risk_Level === 'High').length}\n`;
+        content += `Average DQI: ${sitesData.length > 0 ? (sitesData.reduce((sum, s) => sum + (s.Avg_DQI || 0), 0) / sitesData.length).toFixed(1) : 0}\n\n`;
+        content += `Sites Detail:\n`;
+        sitesData.forEach(site => {
+          content += `- ${site.Site_ID}: ${site.Region}, ${site.Country} | Risk: ${site.Risk_Level} (${site.Risk_Score}) | DQI: ${site.Avg_DQI}\n`;
+        });
+        break;
+      case 'patients':
+        const cleanCount = patientsData.filter(p => p.Clean_Patient_Status === 'Clean').length;
+        content = `Patient-Level Report\nGenerated: ${timestamp}\n\n`;
+        content += `Total Patients: ${patientsData.length}\n`;
+        content += `Clean Patients: ${cleanCount}\n`;
+        content += `Clean Rate: ${patientsData.length > 0 ? ((cleanCount / patientsData.length) * 100).toFixed(1) : 0}%\n\n`;
+        content += `Patients Detail:\n`;
+        patientsData.slice(0, 50).forEach(patient => {
+          content += `- ${patient.Subject_ID} (${patient.Site_ID}): ${patient.Clean_Patient_Status} | DQI: ${patient.Data_Quality_Index} | Issues: ${patient.total_open_issues || 0}\n`;
+        });
+        if (patientsData.length > 50) {
+          content += `\n... and ${patientsData.length - 50} more patients\n`;
+        }
+        break;
+      case 'high_risk':
+        const highRiskSites = sitesData.filter(s => s.Risk_Level === 'High');
+        content = `High Risk Sites Report\nGenerated: ${timestamp}\n\n`;
+        content += `High Risk Sites Count: ${highRiskSites.length}\n\n`;
+        highRiskSites.forEach(site => {
+          content += `- ${site.Site_ID}: ${site.Region}, ${site.Country} | Risk Score: ${site.Risk_Score} | DQI: ${site.Avg_DQI} | Subjects: ${site.Total_Subjects}\n`;
+        });
+        break;
+      case 'summary':
+        const metrics = {
+          totalSites: sitesData.length,
+          totalPatients: patientsData.length,
+          highRisk: sitesData.filter(s => s.Risk_Level === 'High').length,
+          mediumRisk: sitesData.filter(s => s.Risk_Level === 'Medium').length,
+          lowRisk: sitesData.filter(s => s.Risk_Level === 'Low').length,
+          cleanPatients: patientsData.filter(p => p.Clean_Patient_Status === 'Clean').length,
+          avgDQI: sitesData.length > 0 ? (sitesData.reduce((sum, s) => sum + (s.Avg_DQI || 0), 0) / sitesData.length).toFixed(1) : 0
+        };
+        content = `Executive Summary Report\nGenerated: ${timestamp}\n\n`;
+        content += `KEY METRICS:\n`;
+        content += `- Total Sites: ${metrics.totalSites}\n`;
+        content += `- Total Patients: ${metrics.totalPatients}\n`;
+        content += `- Average DQI: ${metrics.avgDQI}\n`;
+        content += `- Clean Patient Rate: ${metrics.totalPatients > 0 ? ((metrics.cleanPatients / metrics.totalPatients) * 100).toFixed(1) : 0}%\n\n`;
+        content += `RISK DISTRIBUTION:\n`;
+        content += `- High Risk: ${metrics.highRisk} sites (IMMEDIATE ACTION REQUIRED)\n`;
+        content += `- Medium Risk: ${metrics.mediumRisk} sites (Monitor closely)\n`;
+        content += `- Low Risk: ${metrics.lowRisk} sites (Performing well)\n`;
+        break;
+      default:
+        content = `Report: ${reportType}\nGenerated: ${timestamp}\n\nNo content available.`;
+    }
+    return content;
+  };
+
+  const sendReportEmail = async () => {
+    if (!emailAddress) {
+      setError('Please enter an email address');
+      return;
+    }
+
+    setSendingEmail(true);
+    setError('');
+
+    try {
+      const reportContent = generateReportContent(emailReportType);
+      await api.post('/email/send-report', {
+        recipient_email: emailAddress,
+        report_type: emailReportType,
+        report_content: reportContent
+      });
+      setEmailSuccess('Email sent successfully!');
+      setTimeout(() => {
+        setEmailDialogOpen(false);
+        setEmailAddress('');
+        setEmailSuccess('');
+      }, 2000);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to send email');
+    } finally {
+      setSendingEmail(false);
+    }
   };
 
   const containerVariants = {
@@ -195,6 +303,13 @@ const ReportsPage = () => {
                   <FileSpreadsheet className="h-4 w-4 mr-2" />
                   CSV
                 </Button>
+                <Button
+                  onClick={() => openEmailDialog('sites')}
+                  variant="outline"
+                  className="border-neon-cyan/30 hover:bg-neon-cyan/10 text-neon-cyan"
+                >
+                  <Mail className="h-4 w-4" />
+                </Button>
               </div>
               <div className="text-xs text-slate-500 flex items-center gap-1">
                 <Sparkles className="h-3 w-3 text-neon-cyan" />
@@ -240,6 +355,13 @@ const ReportsPage = () => {
                   <FileSpreadsheet className="h-4 w-4 mr-2" />
                   CSV
                 </Button>
+                <Button
+                  onClick={() => openEmailDialog('patients')}
+                  variant="outline"
+                  className="border-neon-purple/30 hover:bg-neon-purple/10 text-neon-purple"
+                >
+                  <Mail className="h-4 w-4" />
+                </Button>
               </div>
               <div className="text-xs text-slate-500 flex items-center gap-1">
                 <Sparkles className="h-3 w-3 text-neon-purple" />
@@ -264,13 +386,22 @@ const ReportsPage = () => {
               <p className="text-sm text-slate-400">
                 Sites flagged as high risk requiring immediate attention.
               </p>
-              <Button
-                onClick={exportHighRiskCSV}
-                className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30"
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Export CSV ({sitesData.filter(s => s.Risk_Level === 'High').length})
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  onClick={exportHighRiskCSV}
+                  className="flex-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Export CSV ({sitesData.filter(s => s.Risk_Level === 'High').length})
+                </Button>
+                <Button
+                  onClick={() => openEmailDialog('high_risk')}
+                  variant="outline"
+                  className="border-red-500/30 hover:bg-red-500/10 text-red-400"
+                >
+                  <Mail className="h-4 w-4" />
+                </Button>
+              </div>
               <div className="text-xs text-red-400/70 flex items-center gap-1">
                 <Filter className="h-3 w-3" />
                 Immediate action required
@@ -339,6 +470,15 @@ const ReportsPage = () => {
                   )}
                   Generate Executive PDF
                 </Button>
+                <Button
+                  onClick={() => openEmailDialog('summary')}
+                  variant="outline"
+                  className="border-white/20 hover:bg-white/10 text-white"
+                  size="lg"
+                >
+                  <Mail className="h-5 w-5 mr-2" />
+                  Email Report
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -380,6 +520,102 @@ const ReportsPage = () => {
           </CardContent>
         </Card>
       </motion.div>
+
+      {/* Email Dialog Modal */}
+      {emailDialogOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="glass-card-premium border border-white/10 rounded-2xl p-6 w-full max-w-md mx-4"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-neon-cyan/20 rounded-xl">
+                  <Mail className="h-5 w-5 text-neon-cyan" />
+                </div>
+                <h3 className="text-xl font-bold text-white">
+                  Email {emailReportType.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())} Report
+                </h3>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setEmailDialogOpen(false);
+                  setEmailAddress('');
+                  setError('');
+                }}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="email" className="text-slate-300 mb-2 block">
+                  Recipient Email Address
+                </Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="Enter email address"
+                  value={emailAddress}
+                  onChange={(e) => setEmailAddress(e.target.value)}
+                  className="bg-white/5 border-white/10 text-white placeholder:text-slate-500 focus:border-neon-cyan"
+                />
+              </div>
+
+              {error && (
+                <Alert variant="destructive" className="bg-red-500/10 border-red-500/30">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
+              {emailSuccess && (
+                <Alert className="bg-emerald-500/10 border-emerald-500/30">
+                  <AlertDescription className="text-emerald-400 flex items-center gap-2">
+                    <Sparkles className="h-4 w-4" />
+                    {emailSuccess}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setEmailDialogOpen(false);
+                    setEmailAddress('');
+                    setError('');
+                  }}
+                  className="flex-1 border-white/10 hover:bg-white/5 text-white"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={sendReportEmail}
+                  disabled={sendingEmail || !emailAddress}
+                  className="flex-1 bg-gradient-to-r from-neon-cyan to-neon-blue hover:opacity-90 text-black font-semibold"
+                >
+                  {sendingEmail ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-black border-t-transparent mr-2" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Mail className="h-4 w-4 mr-2" />
+                      Send Email
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </motion.div>
   );
 };

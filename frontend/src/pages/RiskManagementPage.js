@@ -189,9 +189,9 @@ const RiskManagementPage = () => {
                 <p className="text-3xl font-bold text-emerald-600">
                   {highRiskSites.length > 0
                     ? (
-                        highRiskSites.reduce((sum, site) => sum + (site.Risk_Score || 0), 0) /
-                        highRiskSites.length
-                      ).toFixed(2)
+                      highRiskSites.reduce((sum, site) => sum + (site.Risk_Score || 0), 0) /
+                      highRiskSites.length
+                    ).toFixed(2)
                     : 0}
                 </p>
               </div>
@@ -214,7 +214,7 @@ const RiskManagementPage = () => {
               alerts.map((alert, index) => (
                 <div
                   key={alert.id}
-                  className="flex items-start justify-between p-4 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                  className="flex items-start justify-between p-4 border border-slate-700 rounded-lg hover:bg-slate-800/50 transition-colors"
                   data-testid={`alert-${index}`}
                 >
                   <div className="flex-1">
@@ -224,9 +224,9 @@ const RiskManagementPage = () => {
                         {alert.priority}
                       </Badge>
                     </div>
-                    <p className="text-sm text-slate-600">{alert.description}</p>
+                    <p className="text-sm text-slate-300">{alert.description}</p>
                     {alert.site_id && (
-                      <p className="text-xs text-slate-500 mt-1">Site: {alert.site_id}</p>
+                      <p className="text-xs text-slate-400 mt-1">Site: {alert.site_id}</p>
                     )}
                   </div>
                   <Button
@@ -255,12 +255,12 @@ const RiskManagementPage = () => {
             {highRiskSites.slice(0, 10).map((site, index) => (
               <div
                 key={index}
-                className="flex items-center justify-between p-4 border-l-4 border-l-red-500 bg-red-50 rounded"
+                className="flex items-center justify-between p-4 border-l-4 border-l-red-500 bg-red-900/10 rounded"
                 data-testid={`high-risk-site-${index}`}
               >
                 <div>
                   <h4 className="font-semibold">{site.Site_ID}</h4>
-                  <p className="text-sm text-slate-600">
+                  <p className="text-sm text-slate-300">
                     {site.Country} | {site.Region}
                   </p>
                 </div>

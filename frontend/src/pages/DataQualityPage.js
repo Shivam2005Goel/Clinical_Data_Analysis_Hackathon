@@ -88,7 +88,7 @@ const DataQualityPage = () => {
       {/* Issues Summary */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         {getIssuesSummary().map((issue, index) => (
-          <Card key={index} className="border-l-4" style={{ borderLeftColor: issue.color }}>
+          <Card key={index} className="glass-card border-none border-l-4" style={{ borderLeftColor: issue.color }}>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -105,16 +105,16 @@ const DataQualityPage = () => {
       </div>
 
       {/* Issues Breakdown Chart */}
-      <Card>
+      <Card className="glass-card border-none mt-6">
         <CardHeader>
           <CardTitle>Issues Breakdown</CardTitle>
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={getIssuesSummary()}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="category" />
-              <YAxis />
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="category" stroke="#94a3b8" />
+              <YAxis stroke="#94a3b8" />
               <Tooltip />
               <Bar dataKey="count" fill="#0EA5E9" />
             </BarChart>
@@ -123,16 +123,16 @@ const DataQualityPage = () => {
       </Card>
 
       {/* DQI Distribution */}
-      <Card>
+      <Card className="glass-card border-none">
         <CardHeader>
           <CardTitle>Data Quality Index Distribution</CardTitle>
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={getDQIDistribution()}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="range" />
-              <YAxis />
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="range" stroke="#94a3b8" />
+              <YAxis stroke="#94a3b8" />
               <Tooltip />
               <Legend />
               <Bar dataKey="count" fill="#10B981" name="Number of Patients" />
@@ -142,7 +142,7 @@ const DataQualityPage = () => {
       </Card>
 
       {/* Top Issues by Site */}
-      <Card>
+      <Card className="glass-card border-none">
         <CardHeader>
           <CardTitle>Sites Requiring Attention</CardTitle>
         </CardHeader>
@@ -155,22 +155,22 @@ const DataQualityPage = () => {
               .map((site, index) => (
                 <div
                   key={index}
-                  className="flex items-center justify-between p-3 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                  className="flex items-center justify-between p-4 border border-slate-800 rounded-xl hover:bg-slate-800/60 transition-all duration-300 group shadow-sm bg-slate-900/40"
                 >
                   <div>
-                    <p className="font-semibold">{site.Site_ID}</p>
-                    <p className="text-sm text-slate-500">
+                    <p className="font-bold text-white group-hover:text-neon-cyan transition-colors">{site.Site_ID}</p>
+                    <p className="text-sm text-slate-400">
                       {site.Country} | DQI: {site.Avg_DQI ? site.Avg_DQI.toFixed(1) : 0}
                     </p>
                   </div>
                   <div className="flex gap-4 text-sm">
                     <div className="text-center">
-                      <p className="text-red-600 font-bold">{site.Total_Open_Issues || 0}</p>
-                      <p className="text-xs text-slate-500">Open Issues</p>
+                      <p className="text-red-500 font-bold text-base group-hover:scale-110 transition-transform">{site.Total_Open_Issues || 0}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-slate-400 font-medium">Open Issues</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-amber-600 font-bold">{site.Total_Missing_Pages || 0}</p>
-                      <p className="text-xs text-slate-500">Missing Pages</p>
+                      <p className="text-amber-500 font-bold text-base group-hover:scale-110 transition-transform">{site.Total_Missing_Pages || 0}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-slate-400 font-medium">Missing Pages</p>
                     </div>
                   </div>
                 </div>

@@ -14,13 +14,24 @@ import bcrypt
 import jwt
 from supabase import create_client, Client
 from openai import AsyncOpenAI
+import boto3
+from botocore.exceptions import ClientError
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
+# MongoDB connection with optimized settings for Atlas
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
+client = AsyncIOMotorClient(
+    mongo_url,
+    maxPoolSize=50,  # Connection pool size
+    minPoolSize=10,  # Minimum connections to keep open
+    maxIdleTimeMS=45000,  # Close idle connections after 45s
+    connectTimeoutMS=10000,  # Connection timeout
+    serverSelectionTimeoutMS=10000,  # Server selection timeout
+    retryWrites=True,
+    w='majority'
+)
 db = client[os.environ['DB_NAME']]
 
 # Supabase connection
@@ -31,6 +42,32 @@ supabase: Optional[Client] = None
 if supabase_url and supabase_key and supabase_url != 'YOUR_SUPABASE_PROJECT_URL_HERE':
     supabase = create_client(supabase_url, supabase_key)
 
+# ==================== CACHING ====================
+# Simple in-memory cache for frequently accessed data
+from functools import lru_cache
+import time
+
+# Cache store with TTL
+_cache_store = {}
+_cache_ttl = {}  # Store expiry times
+CACHE_TTL_SECONDS = 60  # Cache for 60 seconds
+
+def get_cached(key: str):
+    """Get value from cache if not expired"""
+    if key in _cache_store:
+        if time.time() < _cache_ttl.get(key, 0):
+            return _cache_store[key]
+        else:
+            # Expired, remove from cache
+            del _cache_store[key]
+            del _cache_ttl[key]
+    return None
+
+def set_cached(key: str, value, ttl: int = CACHE_TTL_SECONDS):
+    """Store value in cache with TTL"""
+    _cache_store[key] = value
+    _cache_ttl[key] = time.time() + ttl
+
 # JWT Config
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-super-secret-jwt-key-change-in-production')
 JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')
@@ -40,9 +77,26 @@ JWT_EXPIRATION_MINUTES = int(os.getenv('JWT_EXPIRATION_MINUTES', '1440'))
 EMERGENT_LLM_KEY = os.getenv('EMERGENT_LLM_KEY') # Keeping for backward compatibility
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY') or EMERGENT_LLM_KEY
 
+# AWS SES Config
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
+SENDER_EMAIL = os.getenv('SENDER_EMAIL')
+
+ses_client = None
+if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+    try:
+        ses_client = boto3.client(
+            'ses',
+            region_name=AWS_REGION,
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+        )
+    except Exception as e:
+        logger.warning(f"Failed to initialize AWS SES client: {e}")
+
+# OpenAI Client placeholder
 client_openai = None
-if OPENAI_API_KEY:
-    client_openai = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Create the main app
 app = FastAPI()
@@ -61,6 +115,14 @@ security = HTTPBearer()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Initialize OpenAI Client
+if OPENAI_API_KEY:
+    masked_key = OPENAI_API_KEY[:8] + "..." + OPENAI_API_KEY[-4:] if len(OPENAI_API_KEY) > 12 else "INVALID_LENGTH"
+    logger.info(f"Initializing OpenAI Client with Key: {masked_key}")
+    client_openai = AsyncOpenAI(api_key=OPENAI_API_KEY)
+else:
+    logger.warning("OPENAI_API_KEY is not set.")
 
 # ==================== MODELS ====================
 
@@ -144,9 +206,25 @@ class AIReportRequest(BaseModel):
     site_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
 
+class EmailReportRequest(BaseModel):
+    recipient_email: EmailStr
+    report_type: str
+    report_content: str
+    subject: Optional[str] = None
+
 # ==================== SUPABASE HELPER ====================
 
-async def fetch_all_supabase_data(table_name: str, batch_size: int = 1000):
+async def fetch_all_supabase_data(table_name: str, batch_size: int = 1000, use_cache: bool = True):
+    """Fetch data from Supabase with caching support"""
+    cache_key = f"supabase_{table_name}"
+    
+    # Check cache first
+    if use_cache:
+        cached = get_cached(cache_key)
+        if cached is not None:
+            logger.info(f"Cache hit for {table_name}")
+            return cached
+    
     all_data = []
     start = 0
     while True:
@@ -168,6 +246,11 @@ async def fetch_all_supabase_data(table_name: str, batch_size: int = 1000):
         except Exception as e:
             logger.error(f"Error fetching batch from {table_name}: {str(e)}")
             break
+    
+    # Store in cache
+    if use_cache and all_data:
+        set_cached(cache_key, all_data)
+        logger.info(f"Cached {len(all_data)} records from {table_name}")
             
     return all_data
 
@@ -224,6 +307,67 @@ def create_access_token(data: dict) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRATION_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def send_email_notification(to_email: str, alert_data: dict):
+    """
+    Sends an email notification about a new alert using Amazon SES.
+    If SES is not configured, logs a mock email to the console.
+    """
+    if not ses_client or not SENDER_EMAIL:
+        logger.info(f"========== MOCK EMAIL SENT (SES Not Configured) ==========")
+        logger.info(f"To: {to_email}")
+        logger.info(f"Subject: New Clinical Alert: {alert_data.get('title')}")
+        logger.info(f"Body: Priority: {alert_data.get('priority')}, Type: {alert_data.get('alert_type')}")
+        logger.info(f"==========================================================")
+        return
+
+    try:
+        # Create the email body
+        body_html = f"""
+        <html>
+          <body>
+            <h2>New Alert Created</h2>
+            <p><strong>Title:</strong> {alert_data.get('title')}</p>
+            <p><strong>Priority:</strong> {alert_data.get('priority')}</p>
+            <p><strong>Type:</strong> {alert_data.get('alert_type')}</p>
+            <p><strong>Description:</strong><br>{alert_data.get('description')}</p>
+            <p><strong>Site ID:</strong> {alert_data.get('site_id', 'N/A')}</p>
+            <p><strong>Patient ID:</strong> {alert_data.get('patient_id', 'N/A')}</p>
+            <br>
+            <p>Please log in to the Clinical Data Monitoring System to view more details.</p>
+          </body>
+        </html>
+        """
+        
+        body_text = f"New Alert Created\nTitle: {alert_data.get('title')}\nPriority: {alert_data.get('priority')}\nType: {alert_data.get('alert_type')}\nDescription: {alert_data.get('description')}"
+
+        response = ses_client.send_email(
+            Source=SENDER_EMAIL,
+            Destination={
+                'ToAddresses': [to_email],
+            },
+            Message={
+                'Subject': {
+                    'Data': f"New Clinical Alert: {alert_data.get('title')}",
+                    'Charset': 'UTF-8'
+                },
+                'Body': {
+                    'Text': {
+                        'Data': body_text,
+                        'Charset': 'UTF-8'
+                    },
+                    'Html': {
+                        'Data': body_html,
+                        'Charset': 'UTF-8'
+                    }
+                }
+            }
+        )
+        logger.info(f"Email notification sent to {to_email} via SES. MessageId: {response['MessageId']}")
+    except ClientError as e:
+        logger.error(f"Failed to send email notification via SES: {e.response['Error']['Message']}")
+    except Exception as e:
+        logger.error(f"Unexpected error sending email: {str(e)}")
 
 # ==================== FIREBASE INITIALIZATION ====================
 
@@ -331,7 +475,7 @@ async def register(user_data: UserRegister):
 async def login(credentials: UserLogin):
     logger.info(f"Login attempt for email: {credentials.email}")
     user_doc = await get_user_by_email(credentials.email)
-    if not user_doc or not verify_password(credentials.password, user_doc['password']):
+    if not user_doc or 'password' not in user_doc or not verify_password(credentials.password, user_doc['password']):
         raise HTTPException(status_code=400, detail="Invalid email or password")
     
     user = User(**{k: v for k, v in user_doc.items() if k != 'password'})
@@ -412,6 +556,21 @@ async def create_alert(alert_data: AlertCreate, current_user: dict = Depends(get
     doc = alert.model_dump()
     doc['created_at'] = doc['created_at'].isoformat()
     await db.alerts.insert_one(doc)
+    
+    # Send email notification to the creator (current user)
+    # Background task would be better for production, but direct call is fine for now
+    try:
+        current_user_email = current_user.get('email')
+        logger.info(f"Attempting to send email to: {current_user_email}")
+        
+        if current_user_email:
+            send_email_notification(current_user_email, doc)
+        else:
+            logger.warning("Could not send email: User email not found in current_user object")
+            logger.warning(f"Current User Object: {current_user}")
+    except Exception as e:
+        logger.error(f"Error in email notification flow: {str(e)}")
+
     return alert
 
 @api_router.get("/alerts", response_model=List[Alert])
@@ -476,23 +635,40 @@ async def ai_natural_language_query(request: AIQueryRequest, current_user: dict 
         raise HTTPException(status_code=503, detail="AI service not configured (OPENAI_API_KEY missing)")
     
     try:
+        logger.info(f"AI Query received: {request.query}")
         # Get context data from Supabase
         context = "You are an AI assistant for a Clinical Data Monitoring System. "
         
         if not supabase:
+             logger.warning("Supabase NOT configured for AI context")
              context += "\n\nCRITICAL SYSTEM STATUS: Supabase database is NOT configured. You have NO access to any clinical data. If the user asks about data, sites, patients, or risks, explicitly inform them that Supabase must be configured and data imported first."
         else:
             try:
-                # Attempt to get site summary data if available
-                # Note: This table name assumes the standard setup
-                sites = supabase.table('site_level_summary').select('*').limit(20).execute()
+                # Fetch summary data from all key tables to provide comprehensive context
+                logger.info("Fetching context from Supabase tables")
+                
+                # 1. Sites Data (General info)
+                sites = supabase.table('Sites Data').select('*').limit(10).execute()
                 if sites.data:
-                    context += f"\n\nHere is a sample of site data (Json format): {str(sites.data)}. "
-                else:
-                    context += "\n\nSYSTEM STATUS: Supabase is connected but returned NO data from 'site_level_summary'. The tables might be empty."
+                    context += f"\n\n[Sites Data Sample]: {str(sites.data)}"
+                
+                # 2. High Risk Sites (Critical info)
+                high_risk = supabase.table('High Risk Sites').select('*').limit(10).execute()
+                if high_risk.data:
+                    context += f"\n\n[High Risk Sites Sample]: {str(high_risk.data)}"
+                
+                # 3. Patient Data (Data quality info)
+                patients = supabase.table('Patient Data').select('*').limit(10).execute()
+                if patients.data:
+                    context += f"\n\n[Patient Data Sample]: {str(patients.data)}"
+                
+                logger.info("Successfully fetched multi-table context")
+
             except Exception as e:
-                context += f"\n\nSYSTEM STATUS: Supabase is connected but a read error occurred: {str(e)}. Tables might be missing."
+                logger.error(f"Supabase context fetch error: {str(e)}")
+                context += f"\n\nSYSTEM STATUS: Supabase read error: {str(e)}. Some tables may be missing or empty."
         
+        logger.info("Calling OpenAI API...")
         response = await client_openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -500,10 +676,11 @@ async def ai_natural_language_query(request: AIQueryRequest, current_user: dict 
                 {"role": "user", "content": request.query}
             ]
         )
+        logger.info("AI response received successfully")
         
         return {"response": response.choices[0].message.content}
     except Exception as e:
-        logger.error(f"AI query error: {str(e)}")
+        logger.error(f"AI query error in server.py: {str(e)}")
         raise HTTPException(status_code=500, detail=f"AI query failed: {str(e)}")
 
 @api_router.post("/ai/generate-report")
@@ -568,6 +745,98 @@ async def ai_recommend_actions(site_id: Optional[str] = None, current_user: dict
     except Exception as e:
         logger.error(f"AI recommendations error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Recommendations failed: {str(e)}")
+
+# ==================== EMAIL ENDPOINTS ====================
+
+@api_router.post("/email/send-report")
+async def send_report_email(request: EmailReportRequest, current_user: dict = Depends(get_current_user_hybrid)):
+    """
+    Send a generated report via email using AWS SES.
+    """
+    if not ses_client or not SENDER_EMAIL:
+        logger.info(f"========== MOCK EMAIL SENT (SES Not Configured) ==========")
+        logger.info(f"To: {request.recipient_email}")
+        logger.info(f"Subject: {request.subject or f'Clinical Report: {request.report_type}'}")
+        logger.info(f"Report Type: {request.report_type}")
+        logger.info(f"Content Length: {len(request.report_content)} characters")
+        logger.info(f"==========================================================")
+        return {"message": "Email sent successfully (mock mode - SES not configured)", "mock": True}
+
+    try:
+        subject = request.subject or f"Clinical Data Report: {request.report_type.replace('_', ' ').title()}"
+        
+        # Create a nicely formatted HTML email
+        body_html = f"""
+        <html>
+          <head>
+            <style>
+              body {{ font-family: Arial, sans-serif; color: #333; line-height: 1.6; }}
+              .header {{ background: linear-gradient(135deg, #0EA5E9, #0D9488); color: white; padding: 20px; text-align: center; }}
+              .content {{ padding: 20px; background: #f8fafc; }}
+              .report-content {{ background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; white-space: pre-wrap; }}
+              .footer {{ padding: 15px; text-align: center; color: #64748b; font-size: 12px; }}
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Clinical Data Monitoring System</h1>
+              <h2>{request.report_type.replace('_', ' ').title()} Report</h2>
+            </div>
+            <div class="content">
+              <p>Dear User,</p>
+              <p>Please find below the requested {request.report_type.replace('_', ' ')} report generated from the Clinical Data Monitoring System.</p>
+              <div class="report-content">
+{request.report_content}
+              </div>
+            </div>
+            <div class="footer">
+              <p>This report was generated automatically by the Clinical Data Monitoring System.</p>
+              <p>Requested by: {current_user.get('full_name', current_user.get('email', 'Unknown'))}</p>
+            </div>
+          </body>
+        </html>
+        """
+        
+        body_text = f"""Clinical Data Monitoring System
+{request.report_type.replace('_', ' ').title()} Report
+
+{request.report_content}
+
+---
+This report was generated automatically.
+Requested by: {current_user.get('full_name', current_user.get('email', 'Unknown'))}
+"""
+
+        response = ses_client.send_email(
+            Source=SENDER_EMAIL,
+            Destination={
+                'ToAddresses': [request.recipient_email],
+            },
+            Message={
+                'Subject': {
+                    'Data': subject,
+                    'Charset': 'UTF-8'
+                },
+                'Body': {
+                    'Text': {
+                        'Data': body_text,
+                        'Charset': 'UTF-8'
+                    },
+                    'Html': {
+                        'Data': body_html,
+                        'Charset': 'UTF-8'
+                    }
+                }
+            }
+        )
+        logger.info(f"Report email sent to {request.recipient_email} via SES. MessageId: {response['MessageId']}")
+        return {"message": "Email sent successfully", "message_id": response['MessageId']}
+    except ClientError as e:
+        logger.error(f"Failed to send report email via SES: {e.response['Error']['Message']}")
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {e.response['Error']['Message']}")
+    except Exception as e:
+        logger.error(f"Unexpected error sending report email: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
 
 # ==================== FIREBASE AUTH ENDPOINTS ====================
 
@@ -648,13 +917,46 @@ async def health_check():
         "status": "healthy",
         "database": "connected",
         "supabase": supabase_status,
-        "ai_service": "configured" if client_openai else "not_configured"
+        "ai_service": "configured" if client_openai else "not_configured",
+        "cache_entries": len(_cache_store)
     }
+
+@api_router.post("/cache/clear")
+async def clear_cache(current_user: dict = Depends(get_current_user_hybrid)):
+    """Clear the in-memory cache to force fresh data fetch"""
+    global _cache_store, _cache_ttl
+    cache_count = len(_cache_store)
+    _cache_store = {}
+    _cache_ttl = {}
+    logger.info(f"Cache cleared by user {current_user.get('email')}")
+    return {"message": f"Cache cleared successfully", "entries_cleared": cache_count}
 
 # Include router
 app.include_router(api_router)
 
-
+@app.on_event("startup")
+async def startup_db_client():
+    """Create indexes for faster queries on startup"""
+    try:
+        # Create indexes for users collection
+        await db.users.create_index("email", unique=True)
+        await db.users.create_index("id")
+        await db.users.create_index("firebase_uid", sparse=True)
+        
+        # Create indexes for alerts collection
+        await db.alerts.create_index("id")
+        await db.alerts.create_index("status")
+        await db.alerts.create_index([("created_at", -1)])
+        
+        # Create indexes for comments collection
+        await db.comments.create_index([("entity_type", 1), ("entity_id", 1)])
+        
+        # Create indexes for tags collection
+        await db.tags.create_index([("entity_type", 1), ("entity_id", 1)])
+        
+        logger.info("MongoDB indexes created successfully")
+    except Exception as e:
+        logger.warning(f"Could not create indexes: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
