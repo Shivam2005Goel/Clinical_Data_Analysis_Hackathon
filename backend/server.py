@@ -1024,9 +1024,14 @@ async def firebase_login(request: dict):
 
 # ==================== ROOT ENDPOINTS ====================
 
-@api_router.get("/")
+@app.get("/")
 async def root():
-    return {"message": "Clinical Data Monitoring System API", "version": "1.0.0"}
+    """Global root for Render health checks"""
+    return {
+        "status": "healthy",
+        "service": "Clinical Data Monitoring API",
+        "documentation": "/docs"
+    }
 
 @api_router.get("/health")
 async def health_check():
@@ -1056,25 +1061,49 @@ app.include_router(api_router)
 async def startup_db_client():
     """Create indexes for faster queries on startup"""
     try:
-        # Create indexes for users collection
-        await db.users.create_index("email", unique=True)
-        await db.users.create_index("id")
-        await db.users.create_index("firebase_uid", sparse=True)
+        # Each index in its own try-except to avoid one failure blocking everything
+        try:
+            await db.users.create_index("email", unique=True)
+            logger.info("Created user email index")
+        except Exception as e:
+            if "E11000" in str(e):
+                logger.warning("User email index already exists or contains duplicate data (E11000)")
+            else:
+                logger.warning(f"Failed to create user email index: {e}")
+
+        try:
+            await db.users.create_index("id")
+            await db.users.create_index("firebase_uid", sparse=True)
+            logger.info("Created other user indexes")
+        except Exception as e:
+            logger.warning(f"Failed to create secondary user indexes: {e}")
+
+        try:
+            # Create indexes for alerts collection
+            await db.alerts.create_index("id")
+            await db.alerts.create_index("status")
+            await db.alerts.create_index([("created_at", -1)])
+            logger.info("Created alerts indexes")
+        except Exception as e:
+            logger.warning(f"Failed to create alerts indexes: {e}")
         
-        # Create indexes for alerts collection
-        await db.alerts.create_index("id")
-        await db.alerts.create_index("status")
-        await db.alerts.create_index([("created_at", -1)])
-        
-        # Create indexes for comments collection
-        await db.comments.create_index([("entity_type", 1), ("entity_id", 1)])
-        
-        # Create indexes for tags collection
-        await db.tags.create_index([("entity_type", 1), ("entity_id", 1)])
-        
-        logger.info("MongoDB indexes created successfully")
+        try:
+            # Create indexes for comments collection
+            await db.comments.create_index([("entity_type", 1), ("entity_id", 1)])
+            logger.info("Created comments indexes")
+        except Exception as e:
+            logger.warning(f"Failed to create comments indexes: {e}")
+            
+        try:
+            # Create indexes for tags collection
+            await db.tags.create_index([("entity_type", 1), ("entity_id", 1)])
+            logger.info("Created tags indexes")
+        except Exception as e:
+            logger.warning(f"Failed to create tags indexes: {e}")
+            
+        logger.info("MongoDB index initialization check complete")
     except Exception as e:
-        logger.warning(f"Could not create indexes: {e}")
+        logger.error(f"Global index creation failed: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
