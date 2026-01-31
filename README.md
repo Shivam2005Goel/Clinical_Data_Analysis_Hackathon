@@ -12,6 +12,10 @@ A comprehensive Clinical Data Monitoring System with **Supabase** for clinical d
 <img width="2879" height="1539" alt="image" src="https://github.com/user-attachments/assets/dd7ca3fb-b9a6-4df8-a9d7-6fd5afd3a4c9" />
 <img width="2879" height="1505" alt="image" src="https://github.com/user-attachments/assets/34a2faf3-26c0-4ce1-a6d7-e02a4211b5df" />
 <img width="2683" height="1543" alt="image" src="https://github.com/user-attachments/assets/fc035d97-bed5-4727-82db-f561993fde98" />
+<img width="2859" height="1514" alt="image" src="https://github.com/user-attachments/assets/9a833599-2845-47af-8db8-51ec7ea9c0a3" />
+<img width="2869" height="1534" alt="image" src="https://github.com/user-attachments/assets/74d1d26a-4931-4dde-bb0b-c8f76cbb87fe" />
+
+
 
 
 
