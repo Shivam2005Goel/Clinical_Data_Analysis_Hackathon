@@ -4,6 +4,8 @@
 A comprehensive Clinical Data Monitoring System with **Supabase** for clinical data storage and **Firebase Authentication** for secure user access.
 
 ## Register/Login Page
+<img width="2879" height="1525" alt="image" src="https://github.com/user-attachments/assets/c3cdb7b6-5ff9-452a-ae07-e168b490fb7a" />
+
 ![Alt text for the image](./Images/dashboard.png)
 ## Dashboard
 ![Alt text for the image](./Images/dashboard.png)
