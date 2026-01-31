@@ -404,64 +404,13 @@ def init_firebase_admin():
 init_firebase_admin()
 
 async def get_current_user_hybrid(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> dict:
-    if not credentials or not credentials.credentials:
-        logger.warning("No token provided in request header")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
-    
-    token = credentials.credentials
-
-    # Try Firebase authentication first
-    if firebase_admin_initialized:
-        try:
-            import firebase_admin
-            from firebase_admin import auth as firebase_auth
-            decoded_token = firebase_auth.verify_id_token(token)
-            firebase_uid = decoded_token.get('uid')
-            user = await get_user_by_firebase_uid(firebase_uid)
-            if user:
-                logger.info(f"Authenticated via Firebase: {user.get('email')}")
-                return user
-        except Exception as e:
-            logger.debug(f"Firebase token verification failed: {str(e)}")
-    
-    # For Firebase tokens without Admin SDK, try to extract user from token payload
-    try:
-        import base64
-        import json
-        parts = token.split('.')
-        if len(parts) == 3:
-            payload_bytes = parts[1] + '=' * (4 - len(parts[1]) % 4)
-            payload_json = base64.urlsafe_b64decode(payload_bytes).decode('utf-8')
-            payload = json.loads(payload_json)
-            
-            if 'user_id' in payload or 'firebase' in payload.get('iss', ''):
-                firebase_uid = payload.get('user_id') or payload.get('sub')
-                user = await get_user_by_firebase_uid(firebase_uid)
-                if user:
-                    logger.info(f"Authenticated via Firebase Payload: {user.get('email')}")
-                    return user
-    except Exception as e:
-        logger.debug(f"Firebase token decode attempt failed: {str(e)}")
-    
-    # Fall back to JWT authentication
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        user_id = payload.get("sub")
-        if user_id is None:
-            logger.warning("JWT payload missing sub")
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        user = await get_user_by_id(user_id)
-        if user is None:
-            logger.warning(f"User not found for ID: {user_id}")
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-        logger.info(f"Authenticated via JWT: {user.get('email')}")
-        return user
-    except jwt.ExpiredSignatureError:
-        logger.warning("JWT token expired")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.InvalidTokenError as e:
-        logger.warning(f"JWT token invalid: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    # AUTH BYPASS FOR HACKATHON: Always return a mock admin user
+    return {
+        "id": "admin-id",
+        "email": "admin@example.com",
+        "full_name": "Hackathon Admin",
+        "role": "Manager"
+    }
 
 # ==================== AUTH ENDPOINTS ====================
 

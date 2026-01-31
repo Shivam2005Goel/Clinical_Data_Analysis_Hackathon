@@ -12,35 +12,16 @@ export const AuthProvider = ({ children }) => {
   const [useFirebase, setUseFirebase] = useState(false);
 
   useEffect(() => {
-    const firebaseConfigured = isFirebaseConfigured();
-    setUseFirebase(firebaseConfigured);
-
-    if (firebaseConfigured) {
-      const unsubscribe = firebaseAuthStateListener((userData, token) => {
-        if (userData && token) {
-          setUser(userData);
-          setIsAuthenticated(true);
-          localStorage.setItem('token', token);
-          localStorage.setItem('user', JSON.stringify(userData));
-        } else {
-          setUser(null);
-          setIsAuthenticated(false);
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
-        }
-        setLoading(false);
-      });
-
-      return () => unsubscribe();
-    } else {
-      if (checkAuth()) {
-        const currentUser = getCurrentUser();
-        setUser(currentUser);
-        setIsAuthenticated(true);
-      }
-      setLoading(false);
-    }
-
+    // AUTH BYPASS FOR HACKATHON
+    const mockUser = {
+      id: "admin-id",
+      full_name: "Hackathon Admin",
+      email: "admin@example.com",
+      role: "Manager"
+    };
+    setUser(mockUser);
+    setIsAuthenticated(true);
+    setLoading(false);
   }, []);
 
   const login = (userData, token) => {

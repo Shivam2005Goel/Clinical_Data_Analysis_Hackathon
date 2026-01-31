@@ -19,15 +19,7 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <Layout />
-              </ProtectedRoute>
-            }
-          >
+          <Route path="/" element={<Layout />}>
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<DashboardPage />} />
             <Route path="sites" element={<SiteAnalysisPage />} />
@@ -37,6 +29,7 @@ function App() {
             <Route path="data-quality" element={<DataQualityPage />} />
             <Route path="reports" element={<ReportsPage />} />
           </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         <Toaster />
       </BrowserRouter>
