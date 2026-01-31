@@ -5,6 +5,10 @@ A comprehensive Clinical Data Monitoring System with **Supabase** for clinical d
 
 ## Register/Login Page
 <img width="2879" height="1525" alt="image" src="https://github.com/user-attachments/assets/c3cdb7b6-5ff9-452a-ae07-e168b490fb7a" />
+<img width="2863" height="1504" alt="image" src="https://github.com/user-attachments/assets/8ea5e9de-afee-440a-adec-6c44d2e565de" />
+<img width="2859" height="1520" alt="image" src="https://github.com/user-attachments/assets/ed973540-5d72-4ef3-a23f-25094243dfae" />
+
+
 
 ![Alt text for the image](./Images/dashboard.png)
 ## Dashboard
