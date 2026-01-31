@@ -25,14 +25,28 @@ This guide outlines the steps to deploy the application to production environmen
    - `DB_NAME`: `clinical_trials`
    - `SUPABASE_URL`: Your Supabase URL.
    - `SUPABASE_KEY`: Your Supabase API key.
+   - `OPENROUTER_API_KEY`: Your OpenRouter API key.
+   - `OPENAI_API_KEY`: Your OpenAI API key.
+   - `AWS_ACCESS_KEY_ID`: Your AWS Access Key.
+   - `AWS_SECRET_ACCESS_KEY`: Your AWS Secret Key.
+   - `AWS_REGION`: Your AWS Region.
+   - `SENDER_EMAIL`: Your verified sender email.
    - `JWT_SECRET`: A long random string for security.
-   - `CORS_ORIGINS`: Set to your frontend URL (e.g., `https://your-app.vercel.app`) or `*` for testing.
+   - `CORS_ORIGINS`: Set to your frontend URL or `*`.
 
 3. **Deploy**:
    - Connect your GitHub repository.
    - Set the root directory to `backend`.
    - Build Command: `pip install -r requirements.txt`
    - Start Command: `python -m uvicorn server:app --host 0.0.0.0 --port $PORT`
+
+> [!IMPORTANT]
+> **Syncing Local Fixes**: If you've made changes locally (like CORS or Auth fixes), you **must** commit and push them to GitHub before Render can see them.
+> ```bash
+> git add backend/server.py
+> git commit -m "Fix CORS and Auth for Render deployment"
+> git push origin main
+> ```
 
 ---
 

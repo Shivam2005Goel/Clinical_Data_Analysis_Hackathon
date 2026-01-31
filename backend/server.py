@@ -122,16 +122,17 @@ if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
 app = FastAPI()
 
 # Enable CORS for frontend
+cors_origins = os.getenv('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 api_router = APIRouter(prefix="/api")
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 # ==================== MODELS ====================
 
@@ -402,9 +403,13 @@ def init_firebase_admin():
 
 init_firebase_admin()
 
-async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
-    token = credentials.credentials
+async def get_current_user_hybrid(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> dict:
+    if not credentials or not credentials.credentials:
+        logger.warning("No token provided in request header")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
     
+    token = credentials.credentials
+
     # Try Firebase authentication first
     if firebase_admin_initialized:
         try:
@@ -414,30 +419,26 @@ async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = De
             firebase_uid = decoded_token.get('uid')
             user = await get_user_by_firebase_uid(firebase_uid)
             if user:
+                logger.info(f"Authenticated via Firebase: {user.get('email')}")
                 return user
         except Exception as e:
             logger.debug(f"Firebase token verification failed: {str(e)}")
     
     # For Firebase tokens without Admin SDK, try to extract user from token payload
-    # Firebase tokens are JWTs, we can decode them to get the user ID
     try:
-        # Try to decode as Firebase token (without verification since we don't have Admin SDK)
         import base64
         import json
-        
-        # Firebase ID tokens have 3 parts separated by dots
         parts = token.split('.')
         if len(parts) == 3:
-            # Decode the payload (second part)
-            payload_bytes = parts[1] + '=' * (4 - len(parts[1]) % 4)  # Add padding
+            payload_bytes = parts[1] + '=' * (4 - len(parts[1]) % 4)
             payload_json = base64.urlsafe_b64decode(payload_bytes).decode('utf-8')
             payload = json.loads(payload_json)
             
-            # Check if it's a Firebase token
             if 'user_id' in payload or 'firebase' in payload.get('iss', ''):
                 firebase_uid = payload.get('user_id') or payload.get('sub')
                 user = await get_user_by_firebase_uid(firebase_uid)
                 if user:
+                    logger.info(f"Authenticated via Firebase Payload: {user.get('email')}")
                     return user
     except Exception as e:
         logger.debug(f"Firebase token decode attempt failed: {str(e)}")
@@ -447,14 +448,19 @@ async def get_current_user_hybrid(credentials: HTTPAuthorizationCredentials = De
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub")
         if user_id is None:
+            logger.warning("JWT payload missing sub")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         user = await get_user_by_id(user_id)
         if user is None:
+            logger.warning(f"User not found for ID: {user_id}")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        logger.info(f"Authenticated via JWT: {user.get('email')}")
         return user
     except jwt.ExpiredSignatureError:
+        logger.warning("JWT token expired")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
+        logger.warning(f"JWT token invalid: {str(e)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
 # ==================== AUTH ENDPOINTS ====================
