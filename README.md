@@ -33,8 +33,6 @@ A comprehensive Clinical Data Monitoring System with **Supabase** for clinical d
 ![Alt text for the image](./Images/Patient%20Analysis.png)
 ## AI Agents
 ![Alt text for the image](./Images/AI%20Agents.png)
-## Data Quality Analysis
-![Alt text for the image](./Images/Data%20Quality%20Analysis.png)
 ## Generate Reports
 ![Alt text for the image](./Images/Generate%20Reports.png)
 
