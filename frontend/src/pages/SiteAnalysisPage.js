@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import api from '../utils/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
@@ -20,10 +20,6 @@ const SiteAnalysisPage = () => {
   useEffect(() => {
     fetchSites();
   }, []);
-
-  useEffect(() => {
-    filterSites();
-  }, [sites, searchTerm, filterRisk]);
 
   const fetchSites = async () => {
     setLoading(true);
@@ -47,7 +43,7 @@ const SiteAnalysisPage = () => {
     }
   };
 
-  const filterSites = () => {
+  const filterSites = useCallback(() => {
     let filtered = sites;
 
     if (searchTerm) {
@@ -64,7 +60,11 @@ const SiteAnalysisPage = () => {
     }
 
     setFilteredSites(filtered);
-  };
+  }, [sites, searchTerm, filterRisk]);
+
+  useEffect(() => {
+    filterSites();
+  }, [sites, searchTerm, filterRisk, filterSites]);
 
   const getRiskBadgeVariant = (level) => {
     switch (level) {

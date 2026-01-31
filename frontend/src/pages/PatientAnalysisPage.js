@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import api from '../utils/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
@@ -19,10 +19,6 @@ const PatientAnalysisPage = () => {
   useEffect(() => {
     fetchPatients();
   }, []);
-
-  useEffect(() => {
-    filterPatients();
-  }, [patients, searchTerm, filterStatus]);
 
   const fetchPatients = async () => {
     setLoading(true);
@@ -46,7 +42,7 @@ const PatientAnalysisPage = () => {
     }
   };
 
-  const filterPatients = () => {
+  const filterPatients = useCallback(() => {
     let filtered = patients;
 
     if (searchTerm) {
@@ -62,7 +58,11 @@ const PatientAnalysisPage = () => {
     }
 
     setFilteredPatients(filtered);
-  };
+  }, [patients, searchTerm, filterStatus]);
+
+  useEffect(() => {
+    filterPatients();
+  }, [patients, searchTerm, filterStatus, filterPatients]);
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -257,8 +257,8 @@ const PatientAnalysisPage = () => {
                   <td className="p-6 align-middle">
                     <Badge
                       className={`${patient.Clean_Patient_Status === 'Clean'
-                          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                          : 'bg-red-500/20 text-red-400 border-red-500/30'
+                        ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                        : 'bg-red-500/20 text-red-400 border-red-500/30'
                         } border`}
                       data-testid={`status-badge-${patient.Subject_ID}`}
                     >
