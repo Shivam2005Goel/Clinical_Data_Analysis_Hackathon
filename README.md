@@ -1062,32 +1062,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-## 🙏 Acknowledgments
-
-- **Anthropic** for Claude AI assistance
-- **OpenAI** for GPT-5.2 API
-- **Supabase** for database infrastructure
-- **Firebase** for authentication services
-- **FastAPI** community for excellent framework
-- **React** team for the frontend library
-
----
-
-## 📞 Support
-
-### Contact
-
-- **Email**: support@clinicaldatamonitoring.com
-- **Issue Tracker**: [GitHub Issues](https://github.com/yourusername/clinical-data-monitoring/issues)
-- **Documentation**: [Wiki](https://github.com/yourusername/clinical-data-monitoring/wiki)
-
-### Support Hours
-
-- Monday - Friday: 9 AM - 6 PM EST
-- Emergency Support: 24/7 for production issues
-
----
-
+--
 <div align="center">
 
 **Made with ❤️ for Clinical Research Teams**
