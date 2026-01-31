@@ -16,9 +16,13 @@ from supabase import create_client, Client
 from openai import AsyncOpenAI
 import boto3
 from botocore.exceptions import ClientError
+# Logging Configuration
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+# CRITICAL: Use override=True to ensure .env values replace any cached variables in terminal sessions
+load_dotenv(ROOT_DIR / '.env', override=True)
 
 # MongoDB connection with optimized settings for Atlas
 mongo_url = os.environ['MONGO_URL']
@@ -73,9 +77,28 @@ JWT_SECRET = os.getenv('JWT_SECRET', 'your-super-secret-jwt-key-change-in-produc
 JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')
 JWT_EXPIRATION_MINUTES = int(os.getenv('JWT_EXPIRATION_MINUTES', '1440'))
 
-# OpenAI Config
-EMERGENT_LLM_KEY = os.getenv('EMERGENT_LLM_KEY') # Keeping for backward compatibility
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY') or EMERGENT_LLM_KEY
+# AI Model Config
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
+
+# Initialize OpenAI Client
+if OPENAI_API_KEY and len(OPENAI_API_KEY) > 20:
+    logger.info("Initializing OpenAI Client")
+    client_openai = AsyncOpenAI(api_key=OPENAI_API_KEY)
+else:
+    logger.warning("OPENAI_API_KEY is missing or invalid.")
+    client_openai = None
+
+# Initialize OpenRouter Client
+if OPENROUTER_API_KEY and len(OPENROUTER_API_KEY) > 20 and OPENROUTER_API_KEY != 'your_openrouter_api_key_here':
+    logger.info(f"Initializing OpenRouter Client (Key ending in ...{OPENROUTER_API_KEY[-4:]})")
+    client_openrouter = AsyncOpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=OPENROUTER_API_KEY,
+    )
+else:
+    logger.warning("OPENROUTER_API_KEY is missing or still the placeholder. Check backend/.env")
+    client_openrouter = None
 
 # AWS SES Config
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
@@ -95,9 +118,6 @@ if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
     except Exception as e:
         logger.warning(f"Failed to initialize AWS SES client: {e}")
 
-# OpenAI Client placeholder
-client_openai = None
-
 # Create the main app
 app = FastAPI()
 
@@ -112,17 +132,6 @@ app.add_middleware(
 
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer()
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Initialize OpenAI Client
-if OPENAI_API_KEY:
-    masked_key = OPENAI_API_KEY[:8] + "..." + OPENAI_API_KEY[-4:] if len(OPENAI_API_KEY) > 12 else "INVALID_LENGTH"
-    logger.info(f"Initializing OpenAI Client with Key: {masked_key}")
-    client_openai = AsyncOpenAI(api_key=OPENAI_API_KEY)
-else:
-    logger.warning("OPENAI_API_KEY is not set.")
 
 # ==================== MODELS ====================
 
@@ -200,6 +209,7 @@ class Tag(BaseModel):
 
 class AIQueryRequest(BaseModel):
     query: str
+    history: Optional[List[Dict[str, str]]] = None
 
 class AIReportRequest(BaseModel):
     report_type: str
@@ -629,64 +639,138 @@ async def get_tags(entity_type: str, entity_id: str, current_user: dict = Depend
 
 # ==================== AI ENDPOINTS ====================
 
+from fastapi.responses import StreamingResponse
+import json
+
 @api_router.post("/ai/query")
 async def ai_natural_language_query(request: AIQueryRequest, current_user: dict = Depends(get_current_user_hybrid)):
-    if not client_openai:
-        raise HTTPException(status_code=503, detail="AI service not configured (OPENAI_API_KEY missing)")
+    if not client_openai and not client_openrouter:
+        raise HTTPException(status_code=503, detail="AI service not configured (API Keys missing)")
     
     try:
-        logger.info(f"AI Query received: {request.query}")
-        # Get context data from Supabase
-        context = "You are an AI assistant for a Clinical Data Monitoring System. "
+        # Prepare Comprehensive AI Context
+        current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        full_context = (
+            f"Current Data Snapshot: {current_date}\n\n"
+            "You are the Neural Core AI Assistant for a Clinical Data Monitoring System. "
+            "Your primary role is to analyze the provided clinical trial data and give expert insights. "
+            "STRICT PRIVACY RULE: You must base your answers ONLY on the provided dataset context. "
+            "HELPFULNESS RULE: Be proactive and analytical. If the user asks for 'trends', 'risk', or 'status', "
+            "synthesize the current data to provide your best expert assessment. Do NOT simply say you lack 'historical data' "
+            "unless the question specifically requires a date-to-date comparison that is truly missing."
+        )
         
+        # 0. Recent Activity (MongoDB)
+        try:
+            recent_alerts = await db.alerts.find({}, {"_id": 0}).sort("created_at", -1).limit(10).to_list(10)
+            if recent_alerts:
+                full_context += f"\n\n[RECENT TIMELINE/ALERTS]: {json.dumps(recent_alerts)}"
+        except Exception: pass
+
         if not supabase:
-             logger.warning("Supabase NOT configured for AI context")
-             context += "\n\nCRITICAL SYSTEM STATUS: Supabase database is NOT configured. You have NO access to any clinical data. If the user asks about data, sites, patients, or risks, explicitly inform them that Supabase must be configured and data imported first."
+             full_context += "\n\nCRITICAL: Supabase is NOT configured. Advise user to check their environment variables."
         else:
             try:
-                # Fetch summary data from all key tables to provide comprehensive context
-                logger.info("Fetching context from Supabase tables")
+                # 1. Fetch Global Snapshot
+                sites_all = await fetch_all_supabase_data('Sites Data', use_cache=True)
+                patients_all = await fetch_all_supabase_data('Patient Data', use_cache=True)
                 
-                # 1. Sites Data (General info)
-                sites = supabase.table('Sites Data').select('*').limit(10).execute()
-                if sites.data:
-                    context += f"\n\n[Sites Data Sample]: {str(sites.data)}"
+                total_sites = len(sites_all)
+                total_patients = len(patients_all)
+                avg_dqi = sum([s.get('Avg_DQI', 0) for s in sites_all]) / total_sites if total_sites > 0 else 0
+                high_risk_sites = [s for s in sites_all if s.get('Risk_Level') == 'High']
                 
-                # 2. High Risk Sites (Critical info)
-                high_risk = supabase.table('High Risk Sites').select('*').limit(10).execute()
-                if high_risk.data:
-                    context += f"\n\n[High Risk Sites Sample]: {str(high_risk.data)}"
+                stats = {
+                    "total_sites": total_sites,
+                    "total_patients": total_patients,
+                    "high_risk_sites_count": len(high_risk_sites),
+                    "average_dqi": round(avg_dqi, 2),
+                    "monitoring_status": "ACTIVE_LIVE"
+                }
+                full_context += f"\n\n[GLOBAL STUDY STATS]: {json.dumps(stats)}"
                 
-                # 3. Patient Data (Data quality info)
-                patients = supabase.table('Patient Data').select('*').limit(10).execute()
-                if patients.data:
-                    context += f"\n\n[Patient Data Sample]: {str(patients.data)}"
+                # 2. Risk Profile
+                risk_dist = {}
+                for s in sites_all:
+                    l = s.get('Risk_Level', 'Unknown')
+                    risk_dist[l] = risk_dist.get(l, 0) + 1
+                full_context += f"\n\n[STUDY RISK PROFILE]: {json.dumps(risk_dist)}"
+
+                # 3. Comprehensive Site Manifest
+                site_manifest = []
+                for s in sites_all:
+                    # Provide enough fields for identification but keep it compact
+                    site_manifest.append({
+                        "id": s.get('Site_ID'), 
+                        "risk": s.get('Risk_Level'), 
+                        "dqi": s.get('Avg_DQI'), 
+                        "country": s.get('Country'),
+                        "subjects": s.get('Total_Subjects')
+                    })
+                full_context += f"\n\n[SITE MASTER LIST]: {json.dumps(site_manifest)}"
                 
-                logger.info("Successfully fetched multi-table context")
+                # 4. Patient Samples
+                full_context += f"\n\n[PATIENT QUALITY SAMPLES]: {json.dumps(patients_all[:15])}"
+                
+                logger.info(f"Neural Context Ready: {total_sites} sites, {total_patients} patients analyzed.")
+                
+            except Exception as e:
+                logger.error(f"Context fetch error: {str(e)}")
+                full_context += "\n\n(System Alert: Data access issues. Insights may be limited.)"
+        
+        async def stream_generator():
+            try:
+                # Prepare messages with history
+                messages = [{"role": "system", "content": full_context}]
+                if request.history:
+                    # Filter and format history
+                    for msg in request.history:
+                        if msg.get('role') and msg.get('content'):
+                            role = 'assistant' if msg['role'] == 'ai' else msg['role']
+                            messages.append({"role": role, "content": msg['content']})
+                
+                messages.append({"role": "user", "content": request.query})
+
+                if client_openrouter:
+                    logger.info(f"Neural Core: Calling OpenRouter with streaming (Context: {len(messages)} msgs)...")
+                    response = await client_openrouter.chat.completions.create(
+                        model="arcee-ai/trinity-large-preview:free",
+                        messages=messages,
+                        stream=True
+                    )
+                elif client_openai:
+                    logger.warning("Neural Core Fallback: OpenRouter not available. Calling OpenAI (Limited Quota)...")
+                    response = await client_openai.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=messages,
+                        stream=True
+                    )
+                else:
+                    logger.error("Neural Core Error: No AI providers configured (Check backend/.env)")
+                    yield f"data: {json.dumps({'error': 'AI services not configured. Please check backend API keys.'})}\n\n"
+                    return
+
+                async for chunk in response:
+                    if hasattr(chunk, 'choices') and chunk.choices:
+                        content = getattr(chunk.choices[0].delta, 'content', None)
+                        if content:
+                            yield f"data: {json.dumps({'content': content})}\n\n"
+                
+                yield "data: [DONE]\n\n"
 
             except Exception as e:
-                logger.error(f"Supabase context fetch error: {str(e)}")
-                context += f"\n\nSYSTEM STATUS: Supabase read error: {str(e)}. Some tables may be missing or empty."
-        
-        logger.info("Calling OpenAI API...")
-        response = await client_openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": context + "Answer questions about clinical trial data, site performance, patient data quality, and provide actionable insights. If data is missing, guide the user to setup."} ,
-                {"role": "user", "content": request.query}
-            ]
-        )
-        logger.info("AI response received successfully")
-        
-        return {"response": response.choices[0].message.content}
+                logger.error(f"Streaming error: {str(e)}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+        return StreamingResponse(stream_generator(), media_type="text/event-stream")
     except Exception as e:
-        logger.error(f"AI query error in server.py: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"AI query failed: {str(e)}")
+        logger.error(f"AI query entry error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"AI query initialization failed: {str(e)}")
 
 @api_router.post("/ai/generate-report")
 async def ai_generate_report(request: AIReportRequest, current_user: dict = Depends(get_current_user_hybrid)):
-    if not client_openai:
-        raise HTTPException(status_code=503, detail="AI service not configured (OPENAI_API_KEY missing)")
+    if not client_openai and not client_openrouter:
+        raise HTTPException(status_code=503, detail="AI service not configured (API Keys missing)")
     
     try:
         system_context = "You are an expert clinical data analyst. Generate detailed, professional reports with clear sections, metrics, and actionable recommendations."
@@ -707,13 +791,27 @@ async def ai_generate_report(request: AIReportRequest, current_user: dict = Depe
         if request.context:
             prompt += f"\n\nContext data: {request.context}"
         
-        response = await client_openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_context},
-                {"role": "user", "content": prompt}
-            ]
-        )
+        if client_openrouter:
+            logger.info("Generating report with OpenRouter...")
+            response = await client_openrouter.chat.completions.create(
+                model="arcee-ai/trinity-large-preview:free",
+                messages=[
+                    {"role": "system", "content": system_context},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+        elif client_openai:
+            logger.warning("Generating report with OpenAI (Fallback)...")
+            response = await client_openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_context},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+        else:
+            logger.error("No valid AI providers configured for report generation")
+            raise HTTPException(status_code=503, detail="AI service not configured. Check backend API keys.")
         
         return {"report": response.choices[0].message.content, "report_type": request.report_type}
     except Exception as e:
@@ -722,8 +820,8 @@ async def ai_generate_report(request: AIReportRequest, current_user: dict = Depe
 
 @api_router.post("/ai/recommend-actions")
 async def ai_recommend_actions(site_id: Optional[str] = None, current_user: dict = Depends(get_current_user_hybrid)):
-    if not client_openai:
-        raise HTTPException(status_code=503, detail="AI service not configured (OPENAI_API_KEY missing)")
+    if not client_openai and not client_openrouter:
+        raise HTTPException(status_code=503, detail="AI service not configured (API Keys missing)")
     
     try:
         system_context = "You are an AI agent specialized in clinical trial operations. Provide specific, prioritized action recommendations based on risk signals and data quality metrics."
@@ -733,13 +831,27 @@ async def ai_recommend_actions(site_id: Optional[str] = None, current_user: dict
 
         prompt = f"Based on the clinical trial data, recommend specific actions for {'site ' + site_id if site_id else 'all sites'}. Focus on: 1) Reducing open queries, 2) Improving data quality, 3) Addressing high-risk indicators, 4) Optimizing CRA monitoring activities."
         
-        response = await client_openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_context},
-                {"role": "user", "content": prompt}
-            ]
-        )
+        if client_openrouter:
+            logger.info("Generating recommendations with OpenRouter...")
+            response = await client_openrouter.chat.completions.create(
+                model="arcee-ai/trinity-large-preview:free",
+                messages=[
+                    {"role": "system", "content": system_context},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+        elif client_openai:
+            logger.warning("Generating recommendations with OpenAI (Fallback)...")
+            response = await client_openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_context},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+        else:
+            logger.error("No valid AI providers configured for recommendations")
+            raise HTTPException(status_code=503, detail="AI service not configured. Check backend API keys.")
         
         return {"recommendations": response.choices[0].message.content}
     except Exception as e:

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../utils/api';
+// Using backend streaming instead of direct SDK
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Textarea } from '../components/ui/textarea';
@@ -91,6 +92,9 @@ const AIAssistantPage = () => {
   const [avatarState, setAvatarState] = useState('idle'); // idle, listening, processing, speaking
   const chatEndRef = useRef(null);
   const fileInputRef = useRef(null);
+
+  // --- BACKEND STREAMING LOGIC ---
+  // We now use the backend /api/ai/query endpoint for streaming
 
   // --- VOICE LOGIC ---
   const startListening = () => {
@@ -188,39 +192,98 @@ const AIAssistantPage = () => {
     setAvatarState('processing');
 
     try {
-      // Call the real AI API
-      const response = await api.post('/ai/query', { query: finalQuery });
-      const responseData = response.data;
-
-      let responseContent = responseData.response;
-      let widgets = null;
-
-      // Intelligent widget selection based on response content
-      if (responseContent.toLowerCase().includes('site') && responseContent.toLowerCase().includes('risk')) {
-        widgets = { type: 'risk', data: { score: 85, trend: 'up' } }; // Default high risk widget if site mentioned
-      } else if (responseContent.toLowerCase().includes('trend') || responseContent.toLowerCase().includes('predict')) {
-        widgets = {
-          type: 'trend', data: [
-            { value: 10 }, { value: 25 }, { value: 45 }, { value: 30 }, { value: 60 }, { value: 85 }, { value: 100 }
-          ]
-        };
-      } else {
-        widgets = { type: 'actions', data: ['Generate Report', 'Scan Anomalies', 'Contact CRA'] };
-      }
-
-      const aiMessage = {
+      // --- BACKEND STREAMING (SSE) ---
+      const initialAiMessage = {
         role: 'ai',
-        content: responseContent,
+        content: '',
         timestamp: new Date(),
-        widgets: widgets
+        isStreaming: true,
+        wasStreamed: true
       };
 
-      setChatHistory(prev => [...prev, aiMessage]);
-      speakText(responseContent);
+      setChatHistory(prev => [...prev, initialAiMessage]);
+
+      const token = localStorage.getItem('access_token') || localStorage.getItem('token');
+
+      const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/ai/query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          query: finalQuery,
+          history: chatHistory.map(msg => ({ role: msg.role, content: msg.content }))
+        })
+      });
+
+      if (!response.ok) throw new Error('Failed to connect to Neural Core');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.replace('data: ', '').trim();
+            if (dataStr === '[DONE]') break;
+
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.content) {
+                fullContent += data.content;
+                setChatHistory(prev => {
+                  const newHistory = [...prev];
+                  const lastMsg = newHistory[newHistory.length - 1];
+                  if (lastMsg && lastMsg.role === 'ai') {
+                    lastMsg.content = fullContent;
+                  }
+                  return newHistory;
+                });
+              } else if (data.error) {
+                toast.error(data.error);
+              }
+            } catch (e) {
+              // Partial JSON or other SSE noise
+            }
+          }
+        }
+      }
+
+      // Finalize the message
+      setChatHistory(prev => {
+        const newHistory = [...prev];
+        const lastMsg = newHistory[newHistory.length - 1];
+        if (lastMsg && lastMsg.role === 'ai') {
+          lastMsg.isStreaming = false;
+          // Intelligent widget selection
+          if (fullContent.toLowerCase().includes('site') && fullContent.toLowerCase().includes('risk')) {
+            lastMsg.widgets = { type: 'risk', data: { score: 85, trend: 'up' } };
+          } else if (fullContent.toLowerCase().includes('trend') || fullContent.toLowerCase().includes('predict')) {
+            lastMsg.widgets = {
+              type: 'trend', data: [
+                { value: 10 }, { value: 25 }, { value: 45 }, { value: 30 }, { value: 60 }, { value: 85 }, { value: 100 }
+              ]
+            };
+          } else {
+            lastMsg.widgets = { type: 'actions', data: ['Generate Report', 'Scan Anomalies', 'Contact CRA'] };
+          }
+        }
+        return newHistory;
+      });
+
+      speakText(fullContent);
 
     } catch (err) {
       console.error("AI Error:", err);
-      const errorMessage = err.response?.data?.detail || "Connection to Neural Core failed.";
+      const errorMessage = err.message || "Connection to Neural Core failed.";
       setChatHistory(prev => [...prev, { role: 'error', content: errorMessage, timestamp: new Date() }]);
       toast.error(errorMessage);
     } finally {
@@ -322,7 +385,26 @@ const AIAssistantPage = () => {
                   <div className="flex-1">
                     {msg.role === 'ai' ? (
                       <>
-                        <TypewriterEffect text={msg.content} onComplete={() => { }} />
+                        {msg.isStreaming ? (
+                          <div className="leading-relaxed tracking-wide text-cyan-50/90 whitespace-pre-wrap font-mono text-sm">
+                            {msg.content}
+                            <span className="inline-block w-1 h-4 bg-neon-cyan ml-1 animate-pulse" />
+                          </div>
+                        ) : (
+                          msg.wasStreamed ? (
+                            <div className="leading-relaxed tracking-wide text-cyan-50/90 whitespace-pre-wrap font-mono text-sm">{msg.content}</div>
+                          ) : (
+                            <TypewriterEffect text={msg.content} onComplete={() => { }} />
+                          )
+                        )}
+
+                        {/* Reasoning Tokens Indicator */}
+                        {msg.reasoningTokens > 0 && (
+                          <div className="mt-2 text-[10px] text-fuchsia-400 font-mono opacity-60">
+                            Neural Path: {msg.reasoningTokens} tokens processed
+                          </div>
+                        )}
+
                         {/* Render Widgets if present */}
                         {msg.widgets?.type === 'risk' && <RiskScoreCard {...msg.widgets.data} />}
                         {msg.widgets?.type === 'trend' && <TrendSparkline {...msg.widgets.data} />}
@@ -336,63 +418,63 @@ const AIAssistantPage = () => {
               </div>
             </motion.div>
           ))}
+          <div ref={chatEndRef} />
         </AnimatePresence>
-        <div ref={chatEndRef} />
       </div>
 
       {/* Input Area */}
-      <div className="p-4 md:p-6 border-t border-white/10 bg-black/80 backdrop-blur-xl relative z-20">
-        <form onSubmit={handleQuery} className="relative max-w-4xl mx-auto flex gap-3 items-end">
-          {/* File Upload */}
-          <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => fileInputRef.current?.click()}
-            className="text-slate-400 hover:text-neon-cyan hover:bg-white/10 h-12 w-12 rounded-xl border border-white/5"
-          >
-            <Paperclip className="h-5 w-5" />
-          </Button>
-
-          {/* Text Area */}
-          <div className="flex-1 relative bg-white/5 rounded-xl border border-white/10 focus-within:border-neon-cyan/50 focus-within:bg-white/10 transition-all">
-            <Textarea
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleQuery(e);
-                }
-              }}
-              placeholder="Ask Neural Core..."
-              className="min-h-[48px] max-h-[120px] w-full bg-transparent border-none focus:ring-0 resize-none py-3 pl-4 pr-12 text-white placeholder:text-slate-500"
-            />
-          </div>
-
-          {/* Mic Button (or Send if typing) */}
-          {query.trim() ? (
-            <Button
-              type="submit"
-              size="icon"
-              disabled={loading}
-              className="h-12 w-12 rounded-xl bg-neon-cyan text-black hover:bg-neon-cyan/80 shadow-[0_0_15px_rgba(0,243,255,0.4)]"
-            >
-              <Send className="h-5 w-5" />
-            </Button>
-          ) : (
+      <div className="p-4 border-t border-white/10 relative z-10 bg-black/40">
+        <form onSubmit={handleQuery} className="relative">
+          <Textarea
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Query Neural Core..."
+            className="w-full bg-white/5 border-white/10 focus:border-neon-cyan/50 text-white rounded-2xl pr-32 min-h-[60px] max-h-[200px] py-4 transition-all"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleQuery(e);
+              }
+            }}
+          />
+          <div className="absolute right-2 bottom-2 flex items-center gap-1">
             <Button
               type="button"
+              variant="ghost"
               size="icon"
-              onMouseDown={startListening}
-              onMouseUp={() => { /* SpeechRecognition handles end automatically mostly, but mimics hold-to-talk UX styled */ }}
-              className={`h-12 w-12 rounded-xl border border-white/10 ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-white/5 text-slate-400 hover:text-white'}`}
+              onClick={() => fileInputRef.current.click()}
+              className="text-slate-400 hover:text-white"
             >
-              {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              <Paperclip className="h-4 w-4" />
             </Button>
-          )}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={startListening}
+              className={`${isListening ? 'text-red-500' : 'text-slate-400 hover:text-white'}`}
+            >
+              {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            </Button>
+            <Button
+              type="submit"
+              disabled={loading || !query.trim()}
+              className="bg-neon-cyan hover:bg-cyan-600 text-black rounded-xl px-4 flex items-center gap-2"
+            >
+              {loading ? <Zap className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              <span className="hidden md:inline">SEND</span>
+            </Button>
+          </div>
         </form>
+        <p className="text-[10px] text-slate-500 mt-2 ml-2 tracking-widest uppercase font-mono">
+          Neural Core v2.0 // Secured Clinical Protocol
+        </p>
       </div>
     </div>
   );
