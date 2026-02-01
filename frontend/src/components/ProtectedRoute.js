@@ -13,9 +13,11 @@ const ProtectedRoute = ({ children }) => {
     );
   }
 
-  // TEMPORARY BYPASS FOR TESTING
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
   return children;
-  // return isAuthenticated ? children : <Navigate to="/login" replace />;
 };
 
 export default ProtectedRoute;
